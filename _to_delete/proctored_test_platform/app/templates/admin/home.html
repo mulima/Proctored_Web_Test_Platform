@@ -1,0 +1,64 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>Overview</h1>
+<div class="stats">
+  <div class="stat"><div class="n">{{ student_count }}</div><div class="k">registered students</div></div>
+  <div class="stat"><div class="n">{{ verified_count }}</div><div class="k">email confirmed</div></div>
+  <div class="stat"><div class="n">{{ attempts|length }}</div><div class="k">recent attempts</div></div>
+  <div class="stat"><div class="n {% if flagged_count %}bad{% endif %}">{{ flagged_count }}</div><div class="k">flagged for review</div></div>
+</div>
+
+{% if not vision_ready %}
+<div class="warnbox"><strong>No server-side second opinion.</strong>
+  <p class="muted">{{ vision_reason }}</p>
+  <p class="muted">Detection still runs in each student's browser. Drop a
+  <code>phone_detector.onnx</code> into <code>app/static/models/</code> to have the server
+  re-check evidence snapshots as well.</p></div>
+{% endif %}
+
+<section class="card">
+  <h2>Exams</h2>
+  {% if exams %}
+  <div class="scroll"><table>
+    <tr><th>Title</th><th>Questions</th><th>Duration</th><th>State</th><th></th></tr>
+    {% for exam in exams %}
+    <tr>
+      <td>{{ exam.title }}</td>
+      <td>{{ exam.questions|length }}</td>
+      <td>{{ exam.duration_minutes }} min</td>
+      <td>{% if exam.is_open %}<span class="chip ok">OPEN</span>{% else %}<span class="chip">closed</span>{% endif %}</td>
+      <td><a href="/admin/exams/{{ exam.id }}">Edit</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No exams yet. Create one below.</p>{% endif %}
+
+  <h3>New exam</h3>
+  <form method="post" action="/admin/exams">
+    <label>Title<input name="title" placeholder="First Semester Test 1" required></label>
+    <label>Duration (minutes)<input type="number" name="duration_minutes" value="90" min="1"></label>
+    <label>Total marks<input type="number" name="total_marks" value="100"></label>
+    <label>Section C questions to choose<input type="number" name="section_c_required" value="2" min="0"></label>
+    <button class="primary" type="submit">Create exam</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Recent attempts</h2>
+  {% if attempts %}
+  <div class="scroll"><table>
+    <tr><th>Student</th><th>Computer no.</th><th>Started</th><th>State</th><th>Incidents</th><th></th></tr>
+    {% for attempt in attempts %}
+    <tr class="{% if attempt.flagged %}flagged{% endif %}">
+      <td>{{ attempt.student.full_name }}</td>
+      <td>{{ attempt.student.computer_number }}</td>
+      <td>{{ attempt.started_at.strftime('%d %b %H:%M') }}</td>
+      <td>{% if attempt.is_locked %}submitted{% else %}in progress{% endif %}</td>
+      <td>{{ attempt.strike_count }}{% if attempt.flagged %} <span class="chip bad">FLAGGED</span>{% endif %}</td>
+      <td><a href="/admin/attempts/{{ attempt.id }}">Open</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No attempts yet.</p>{% endif %}
+</section>
+{% endblock %}

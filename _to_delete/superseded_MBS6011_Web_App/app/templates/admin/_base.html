@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block nav %}<a href="/admin">Admin</a><a href="/logout">Sign out</a>{% endblock %}
+{% block content %}
+<div class="admin-nav">
+  <a href="/admin">Overview</a>
+  <a href="/admin/students">Students</a>
+  <a href="/admin/attempts">Submissions</a>
+  <a href="/admin/attempts?flagged=1">Flagged</a>
+  <a href="/admin/logs">Logs</a>
+</div>
+{% block admin_content %}{% endblock %}
+{% endblock %}

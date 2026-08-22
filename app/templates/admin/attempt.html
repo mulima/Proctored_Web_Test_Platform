@@ -1,0 +1,86 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>{{ attempt.student.full_name }}</h1>
+<p class="muted">{{ attempt.student.computer_number }} &middot; {{ attempt.student.email }}
+  &middot; {{ attempt.exam.title }}</p>
+
+{% if attempt.flagged %}
+<div class="warnbox"><strong>This attempt is flagged for review.</strong>
+<p class="muted">{{ attempt.strike_count }} incident(s) counted. A flag is a prompt to look,
+not a finding of misconduct &mdash; cameras misread ordinary movement, and this log should be
+read alongside your own invigilation notes.</p></div>
+{% endif %}
+
+<section class="card">
+  <div class="stats">
+    <div class="stat"><div class="n">{{ attempt.strike_count }}</div><div class="k">counted incidents</div></div>
+    <div class="stat"><div class="n">{{ attempt.incidents|length }}</div><div class="k">events recorded</div></div>
+    <div class="stat"><div class="n">{{ attempt.snapshots|length }}</div><div class="k">snapshots</div></div>
+    <div class="stat"><div class="n">{% if attempt.is_locked %}done{% else %}{{ (remaining // 60) }}m{% endif %}</div>
+      <div class="k">{% if attempt.is_locked %}submitted{% else %}time remaining{% endif %}</div></div>
+  </div>
+  <p class="muted" style="margin-top:12px">
+    Started {{ attempt.started_at.strftime('%d %b %Y %H:%M:%S') }} UTC.
+    {% if attempt.submitted_at %}Submitted {{ attempt.submitted_at.strftime('%d %b %Y %H:%M:%S') }} UTC
+    ({{ attempt.submission_mode }}).{% endif %}
+    {{ attempt.auto_submit_reason }}
+  </p>
+  {% if attempt.pdf_bytes %}
+  <a class="button primary" href="/admin/attempts/{{ attempt.id }}/pdf" target="_blank">Open submission PDF</a>
+  {% endif %}
+</section>
+
+{% if attempt.snapshots %}
+<section class="card">
+  <h2>Evidence snapshots</h2>
+  <p class="muted">Captured at the moment a flag was raised. "Server verdict" is an
+  independent re-check of the same image on the server &mdash; where it disagrees with the
+  browser, trust neither and look at the picture yourself.</p>
+  <div class="snapshots">
+    {% for snapshot in attempt.snapshots %}
+    <figure>
+      <img src="/admin/snapshots/{{ snapshot.id }}" alt="Evidence snapshot">
+      <figcaption>
+        {{ snapshot.captured_at.strftime('%H:%M:%S') }} &middot;
+        {% if snapshot.incident %}{{ snapshot.incident.label }}{% else %}unlinked{% endif %}<br>
+        Server verdict: <strong>{{ snapshot.server_verdict }}</strong>
+        {% if snapshot.server_confidence %} ({{ '%.2f'|format(snapshot.server_confidence) }}){% endif %}
+      </figcaption>
+    </figure>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
+<section class="card">
+  <h2>Incident log</h2>
+  {% if attempt.incidents %}
+  <div class="scroll"><table>
+    <tr><th>Time (UTC)</th><th>Into test</th><th>Incident</th><th>Counted</th><th>Detail</th></tr>
+    {% for incident in attempt.incidents %}
+    <tr>
+      <td class="muted">{{ incident.occurred_at.strftime('%H:%M:%S') }}</td>
+      <td class="muted">{{ '%02d:%02d'|format(incident.elapsed_seconds // 60, incident.elapsed_seconds % 60) }}</td>
+      <td>{{ incident.label }}</td>
+      <td>{% if incident.counted %}Yes{% else %}No{% endif %}</td>
+      <td class="muted">{{ incident.detail }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No incidents were recorded.</p>{% endif %}
+</section>
+
+<section class="card">
+  <h2>Answers</h2>
+  {% for question in questions %}
+    {% set answer = answers.get(question.id) %}
+    <h3>Section {{ question.section }}{{ loop.index }}
+      {% if question.section == 'C' %}
+        {% if answer and answer.selected %}<span class="chip ok">submitted for marking</span>
+        {% else %}<span class="chip">not selected</span>{% endif %}
+      {% endif %}</h3>
+    <p class="muted">{{ question.title }} {{ question.prompt[:300] }}{% if question.prompt|length > 300 %}&hellip;{% endif %}</p>
+    <pre>{{ (answer.value if answer else '') or 'No answer' }}</pre>
+  {% endfor %}
+</section>
+{% endblock %}

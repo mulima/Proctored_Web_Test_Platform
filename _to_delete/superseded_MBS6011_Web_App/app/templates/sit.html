@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}{{ exam.title }}{% endblock %}
+{% block body_class %}sitting{% endblock %}
+{% block chrome %}{% endblock %}
+
+{% block content %}
+<div id="paperShield"></div>
+<div id="blackout">
+  <div class="panel">
+    <h2 id="blackoutTitle">Return to full-screen test mode</h2>
+    <p id="blackoutMessage">Your paper is hidden until this window is back in full-screen
+      mode. This interruption has been recorded.</p>
+    <div class="count" id="blackoutCount"></div>
+    <button type="button" onclick="MBS.enterFullscreen()">Return to the test</button>
+    <p class="fine">Press F11 or click the button. Your answers are saved.</p>
+  </div>
+</div>
+
+<div id="preflight" class="overlay">
+  <div class="panel wide">
+    <h2>{{ exam.title }}</h2>
+    <p>The test runs in full screen with your camera on. Allow the camera when your browser
+      asks, then click below. The clock is already running.</p>
+    <ul class="facts">
+      <li>Leaving full screen hides the paper until you return.</li>
+      <li>Copy, paste, right-click and screen-capture keys are disabled.</li>
+      <li>Camera images stay on this computer. Only a still image taken at the moment of a
+        flag is sent to your lecturer.</li>
+    </ul>
+    <div id="preflightStatus" class="notice">Preparing the proctoring checks&hellip;</div>
+    <button id="beginButton" class="primary big" type="button" disabled>Begin</button>
+  </div>
+</div>
+
+<header class="exam-header">
+  <div class="row">
+    <div>
+      <h1>{{ exam.title }}</h1>
+      <div class="muted">{{ student.full_name }} &middot; {{ student.computer_number }}
+        &middot; {{ exam.total_marks }} marks</div>
+    </div>
+    <div id="timer" class="timer">--:--:--</div>
+  </div>
+  <div class="warning">Full-screen test mode. Do not minimise this window, switch away from
+    it, photograph the screen, or leave your seat. Each interruption is timestamped into
+    your submission.</div>
+  <div class="chips">
+    <span id="cameraChip" class="chip">Camera: starting</span>
+    <span id="detectorChip" class="chip">Detector: loading</span>
+    <span id="strikeChip" class="chip">Incidents recorded: {{ attempt.strike_count }}</span>
+    <span id="saveChip" class="chip ok">Saved</span>
+  </div>
+  <div id="alerts" class="alerts"></div>
+</header>
+
+<section id="questionPage" class="card"></section>
+
+<div class="actions">
+  <div class="group">
+    <button id="prevBtn" type="button" onclick="MBS.previous()">Previous</button>
+    <button id="nextBtn" type="button" onclick="MBS.next()">Next</button>
+  </div>
+  <div class="group">
+    <button type="button" onclick="MBS.enterFullscreen()">Restore full screen</button>
+    <button id="submitBtn" class="primary" type="button" onclick="MBS.manualSubmit()">
+      Submit final paper</button>
+  </div>
+</div>
+
+<video id="proctorVideo" playsinline muted autoplay></video>
+<canvas id="proctorCanvas"></canvas>
+{% endblock %}
+
+{% block scripts %}
+<script>
+  window.MBS_DATA = {
+    questions: {{ questions_json | tojson }},
+    settings: {{ settings_json | tojson }},
+    remaining: {{ remaining }},
+    currentQuestion: {{ current_question }},
+    sectionCRequired: {{ exam.section_c_required }},
+    modelUrl: "/static/models/phone_detector.onnx",
+    ortUrl: "/static/js/ort.min.js"
+  };
+</script>
+<script src="/static/js/proctor.js"></script>
+<script src="/static/js/sit.js"></script>
+{% endblock %}

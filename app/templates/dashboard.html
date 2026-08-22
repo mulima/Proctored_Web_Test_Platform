@@ -1,0 +1,57 @@
+{% extends "base.html" %}
+{% block nav %}<a href="/logout">Sign out</a>{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>Hello, {{ student.full_name }}</h1>
+  <p class="muted">Computer number {{ student.computer_number }} &middot; {{ student.email }}</p>
+</section>
+
+{% if not exam %}
+<section class="card">
+  <h2>No test is open</h2>
+  <p>There is nothing to sit at the moment. This page will show the paper as soon as your
+  lecturer opens it. Keep this account details safe until then.</p>
+</section>
+{% elif attempt and attempt.is_locked %}
+<section class="card">
+  <h2>{{ exam.title }} &mdash; submitted</h2>
+  <p>You submitted this paper on
+  {{ attempt.submitted_at.strftime('%d %B %Y at %H:%M') }} UTC. It cannot be sat again.</p>
+  <p><a class="button" href="/submitted">See your submission</a></p>
+</section>
+{% else %}
+<section class="card">
+  <h2>{{ exam.title }}</h2>
+  <ul class="facts">
+    <li><strong>{{ exam.duration_minutes }} minutes</strong> from the moment you start</li>
+    <li><strong>{{ exam.total_marks }} marks</strong></li>
+    <li>Section C: choose exactly <strong>{{ exam.section_c_required }}</strong> question(s)</li>
+  </ul>
+  {% if exam.instructions %}<p>{{ exam.instructions }}</p>{% endif %}
+
+  <div class="warnbox">
+    <h3>Before you start</h3>
+    <ul>
+      <li>Close Zoom, Teams, OBS, AnyDesk and anything else that records or shares your screen.</li>
+      <li>Allow the camera when your browser asks. Without it the test still runs, but the
+          refusal is recorded on your paper.</li>
+      <li>The paper opens in full screen. Leaving full screen hides it until you return, and
+          each interruption is timestamped into your submission.</li>
+      <li>Read <a href="/privacy">what this system records</a> first.</li>
+    </ul>
+  </div>
+
+  {% if attempt %}
+    <p class="notice">You have already started this paper. Your timer is still running and
+    your answers are saved.</p>
+  {% endif %}
+  <form method="post" action="/start">
+    <button class="primary big" type="submit">
+      {% if attempt %}Continue the test{% else %}Start the test{% endif %}
+    </button>
+  </form>
+  <p class="muted">The clock starts when you first click Start and does not stop if you close
+  the page.</p>
+</section>
+{% endif %}
+{% endblock %}

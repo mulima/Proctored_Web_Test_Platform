@@ -1,0 +1,35 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>Application log</h1>
+<p class="muted">{{ total }} entries held. This table is the durable record &mdash; it lives in
+the database, not in container output, so it survives restarts and redeploys.</p>
+<form method="get" action="/admin/logs">
+  <label>Search<input name="q" value="{{ q }}" placeholder="event type or message"></label>
+  <label>Level
+    <select name="level">
+      <option value="">any</option>
+      {% for option in ['INFO','WARNING','ERROR'] %}
+      <option value="{{ option }}" {% if level == option %}selected{% endif %}>{{ option }}</option>
+      {% endfor %}
+    </select></label>
+  <label>Show<input type="number" name="limit" value="{{ limit }}" min="10" max="1000"></label>
+  <button type="submit">Filter</button>
+</form>
+<section class="card">
+  <div class="scroll"><table>
+    <tr><th>When (UTC)</th><th>Level</th><th>Event</th><th>Message</th><th>Student</th><th>IP</th></tr>
+    {% for entry in logs %}
+    <tr>
+      <td class="muted">{{ entry.at.strftime('%d %b %H:%M:%S') }}</td>
+      <td>{% if entry.level == 'ERROR' %}<span class="chip bad">ERROR</span>
+          {% elif entry.level == 'WARNING' %}<span class="chip">WARN</span>
+          {% else %}<span class="muted">info</span>{% endif %}</td>
+      <td><code>{{ entry.event_type }}</code></td>
+      <td>{{ entry.message }}</td>
+      <td class="muted">{{ entry.student_id or '' }}</td>
+      <td class="muted">{{ entry.ip }}</td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="muted">No entries match.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

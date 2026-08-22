@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}{{ settings.course_code }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css">
+</head>
+<body class="{% block body_class %}{% endblock %}">
+  {% block chrome %}
+  <header class="site">
+    <div class="wrap">
+      <a class="brand" href="/">{{ settings.course_code }}</a>
+      <span class="brand-sub">{{ settings.course_title }}</span>
+      <nav>{% block nav %}{% endblock %}</nav>
+    </div>
+  </header>
+  {% endblock %}
+  <main class="wrap">{% block content %}{% endblock %}</main>
+  <footer class="site"><div class="wrap">
+    {{ settings.institution }} &middot; <a href="/privacy">What this system records</a>
+  </div></footer>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

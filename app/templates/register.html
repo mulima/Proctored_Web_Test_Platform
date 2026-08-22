@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Register &middot; {{ settings.brand }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Register for {{ settings.brand }}</h1>
+  <p class="muted">Register before the day of the test. You will be sent a link to confirm your
+  email address, and you cannot sit until you have followed it.</p>
+  {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+  <form method="post" action="/register" autocomplete="off">
+    <label>Full name<input name="full_name" value="{{ values.full_name or '' }}" required></label>
+    <label>Email address<input type="email" name="email" value="{{ values.email or '' }}" required>
+      <span class="hint">The confirmation link goes here. Use an address you can open today.</span></label>
+    <label>Computer number<input name="computer_number" value="{{ values.computer_number or '' }}" required></label>
+    <label>Password<input type="password" name="password" required>
+      <span class="hint">At least 10 characters.</span></label>
+    <label>Confirm password<input type="password" name="confirm_password" required></label>
+    <button class="primary" type="submit">Create account</button>
+  </form>
+  <p class="muted">Already registered? <a href="/login">Sign in</a> &middot;
+     Link not arrived? <a href="/resend">Send it again</a></p>
+</section>
+{% endblock %}

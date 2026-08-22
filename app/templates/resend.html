@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card narrow">
+  <h1>Resend the confirmation link</h1>
+  {% if sent %}
+    <p>If that address has an account waiting to be confirmed, a new link is on its way.</p>
+    <p class="muted">The same answer is given whether or not the address is registered, so
+    this page cannot be used to find out who has signed up.</p>
+    <p><a class="button" href="/login">Back to sign in</a></p>
+  {% else %}
+    <form method="post" action="/resend">
+      <label>Email address<input type="email" name="email" required></label>
+      <button class="primary" type="submit">Send the link again</button>
+    </form>
+  {% endif %}
+</section>
+{% endblock %}

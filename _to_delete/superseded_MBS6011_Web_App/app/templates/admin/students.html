@@ -1,0 +1,41 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>Students</h1>
+<form method="get" action="/admin/students">
+  <label>Search<input name="q" value="{{ q }}" placeholder="name, email or computer number"></label>
+  <button type="submit">Search</button>
+</form>
+<section class="card">
+  <div class="scroll"><table>
+    <tr><th>Computer no.</th><th>Name</th><th>Email</th><th>State</th><th>Registered</th><th>Actions</th></tr>
+    {% for student in students %}
+    <tr>
+      <td>{{ student.computer_number }}</td>
+      <td>{{ student.full_name }}</td>
+      <td>{{ student.email }}</td>
+      <td>
+        {% if student.is_blocked %}<span class="chip bad">BLOCKED</span>
+        {% elif not student.is_verified %}<span class="chip">unconfirmed</span>
+        {% elif not student.is_approved %}<span class="chip">awaiting approval</span>
+        {% else %}<span class="chip ok">ready</span>{% endif %}
+      </td>
+      <td class="muted">{{ student.created_at.strftime('%d %b %H:%M') }}</td>
+      <td>
+        {% if not student.is_verified %}
+        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/verify">
+          <button type="submit">Confirm manually</button></form>{% endif %}
+        {% if not student.is_approved %}
+        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/approve">
+          <button type="submit">Approve</button></form>{% endif %}
+        {% if student.is_blocked %}
+        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/unblock">
+          <button type="submit">Unblock</button></form>
+        {% else %}
+        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/block">
+          <button type="submit">Block</button></form>{% endif %}
+      </td>
+    </tr>
+    {% else %}<tr><td colspan="6" class="muted">Nobody has registered yet.</td></tr>{% endfor %}
+  </table></div>
+</section>
+{% endblock %}

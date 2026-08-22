@@ -1,0 +1,102 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>{{ exam.title }}</h1>
+<p class="muted">{{ exam.questions|length }} question(s) &middot; {{ attempt_count }} attempt(s)
+  &middot; {% if exam.is_open %}<span class="chip ok">OPEN TO STUDENTS</span>
+  {% else %}<span class="chip">closed</span>{% endif %}</p>
+
+{% if request.query_params.get('error') == 'empty' %}
+<ul class="errors"><li>Add at least one question before opening the exam.</li></ul>{% endif %}
+{% if request.query_params.get('error') == 'options' %}
+<ul class="errors"><li>A Section A question needs at least two options, one per line.</li></ul>{% endif %}
+{% if request.query_params.get('error') == 'inuse' %}
+<ul class="errors"><li>Questions cannot be deleted once students have attempted this exam.</li></ul>{% endif %}
+{% if request.query_params.get('error') == 'json' %}
+<ul class="errors"><li>That is not valid JSON.</li></ul>{% endif %}
+{% if request.query_params.get('imported') %}
+<div class="notice">Imported {{ request.query_params.get('imported') }} question(s).</div>{% endif %}
+
+<section class="card">
+  <form method="post" action="/admin/exams/{{ exam.id }}/open">
+    {% if exam.is_open %}
+      <p>Students can sit this paper right now.</p>
+      <button class="danger" type="submit">Close the exam</button>
+    {% else %}
+      <p>Opening releases the paper to every verified student at once, and closes any other
+      open exam. Check the questions first.</p>
+      <button class="primary" type="submit">Open the exam</button>
+    {% endif %}
+  </form>
+</section>
+
+<section class="card">
+  <h2>Settings</h2>
+  <form method="post" action="/admin/exams/{{ exam.id }}/settings">
+    <label>Title<input name="title" value="{{ exam.title }}" required></label>
+    <label>Duration (minutes)<input type="number" name="duration_minutes" value="{{ exam.duration_minutes }}" min="1"></label>
+    <label>Total marks<input type="number" name="total_marks" value="{{ exam.total_marks }}"></label>
+    <label>Section C questions to choose<input type="number" name="section_c_required" value="{{ exam.section_c_required }}" min="0"></label>
+    <label>Instructions to candidates<textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
+    <button class="primary" type="submit">Save settings</button>
+  </form>
+</section>
+
+{% for letter, name in [('A','Section A: multiple choice'),('B','Section B: short answer'),('C','Section C: long writeup')] %}
+<section class="card">
+  <h2>{{ name }} <span class="muted">({{ sections[letter]|length }})</span></h2>
+  {% if sections[letter] %}
+  <div class="scroll"><table>
+    <tr><th style="width:40px">#</th><th>Question</th><th style="width:70px">Marks</th><th style="width:70px"></th></tr>
+    {% for question in sections[letter] %}
+    <tr>
+      <td>{{ loop.index }}</td>
+      <td>
+        {% if question.title %}<strong>{{ question.title }}</strong><br>{% endif %}
+        {{ question.prompt[:400] }}{% if question.prompt|length > 400 %}&hellip;{% endif %}
+        {% if question.options %}<ol type="A" class="muted">
+          {% for option in question.options %}<li>{{ option }}</li>{% endfor %}</ol>{% endif %}
+      </td>
+      <td>{{ question.marks }}</td>
+      <td>
+        {% if not attempt_count %}
+        <form class="inline-form" method="post" action="/admin/questions/{{ question.id }}/delete">
+          <button type="submit">Delete</button></form>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">Nothing here yet.</p>{% endif %}
+</section>
+{% endfor %}
+
+<section class="card">
+  <h2>Add a question</h2>
+  <form method="post" action="/admin/exams/{{ exam.id }}/questions">
+    <label>Section
+      <select name="section">
+        <option value="A">A &mdash; multiple choice</option>
+        <option value="B">B &mdash; short answer</option>
+        <option value="C">C &mdash; long writeup</option>
+      </select></label>
+    <label>Title <span class="hint">Section C only, shown as the question heading.</span>
+      <input name="title"></label>
+    <label>Question or prompt<textarea name="prompt" style="min-height:120px" required></textarea></label>
+    <label>Options <span class="hint">Section A only. One option per line, in order. The
+      answer is stored as a letter.</span><textarea name="options" style="min-height:100px"></textarea></label>
+    <label>Marks<input type="number" name="marks" value="0"></label>
+    <button class="primary" type="submit">Add question</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Bulk import</h2>
+  <p class="muted">Paste a <code>quiz_data.json</code> in the same shape the desktop app used:
+  <code>multiple_choice</code>, <code>short_answer</code>, <code>long_writeup</code>.
+  Questions are appended, not replaced.</p>
+  <form method="post" action="/admin/exams/{{ exam.id }}/import">
+    <textarea name="payload" style="min-height:160px" placeholder='{"multiple_choice": [...], "short_answer": [...], "long_writeup": [...]}'></textarea>
+    <button class="primary" type="submit">Import</button>
+  </form>
+</section>
+{% endblock %}
