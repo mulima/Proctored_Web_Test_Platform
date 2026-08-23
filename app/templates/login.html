@@ -10,6 +10,7 @@
     <label>Password<input type="password" name="password" required></label>
     <button class="primary" type="submit">Sign in</button>
   </form>
+  <p class="muted"><a href="{{ course_url('/forgot-password') }}">Forgot password?</a></p>
   <p class="muted">No account yet? <a href="{{ course_url('/register') }}">Register</a></p>
 </section>
 {% endblock %}

@@ -542,6 +542,20 @@ def student_action(
     student = db.get(Student, student_id)
     if student is None:
         return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
+    if action == "resend_verification":
+        if not student.is_verified:
+            # Reuse the same verification flow students get at registration/resend.
+            from app.routers.auth import send_verification_email
+
+            send_verification_email(db, student, lecturer, request)
+            logging_service.record(
+                db,
+                "STUDENT_VERIFICATION_RESENT",
+                f"{student.computer_number} {student.full_name}",
+                student_id=student.id,
+                request=request,
+            )
+        return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
     if action == "delete":
         if student.attempts:
             # An attempt carries submitted answers and proctoring evidence; deleting the

@@ -16,6 +16,7 @@ _hasher = PasswordHasher()
 SESSION_SALT = "exam.session"
 VERIFY_SALT = "exam.verify"
 LECTURER_VERIFY_SALT = "platform.lecturer.verify"
+RESET_SALT = "exam.reset"
 
 
 def hash_password(password: str) -> str:
@@ -129,6 +130,47 @@ def read_lecturer_verification_token(token: str) -> str | None:
     except (BadSignature, SignatureExpired):
         return None
     return (data or {}).get("email")
+
+
+def _password_reset_marker(password_hash: str) -> str:
+    """Short, non-secret marker tied to the current password hash.
+
+    Reset links embed this marker so a token issued before a password change cannot
+    be reused after the change, without storing token state in the database.
+    """
+    return (password_hash or "")[-24:]
+
+
+def make_password_reset_token(email: str, slug: str, password_hash: str) -> str:
+    return _serializer(RESET_SALT).dumps(
+        {
+            "email": email.lower(),
+            "slug": slug,
+            "p": _password_reset_marker(password_hash),
+            "n": secrets.token_urlsafe(9),
+        }
+    )
+
+
+def read_password_reset_token(token: str, slug: str) -> tuple[str, str] | None:
+    try:
+        data = _serializer(RESET_SALT).loads(
+            token, max_age=settings.password_reset_token_max_age_seconds
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    data = data or {}
+    if data.get("slug") != slug:
+        return None
+    email = data.get("email")
+    marker = data.get("p")
+    if not isinstance(email, str) or not isinstance(marker, str):
+        return None
+    return email, marker
+
+
+def password_reset_token_matches_hash(token_marker: str, password_hash: str) -> bool:
+    return hmac.compare_digest(token_marker, _password_reset_marker(password_hash))
 
 
 def tokens_match(stored: str | None, presented: str) -> bool:

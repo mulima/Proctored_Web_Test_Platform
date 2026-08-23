@@ -32,6 +32,7 @@ class Settings(BaseSettings):
     session_cookie: str = "exam_session"
     session_max_age_seconds: int = 60 * 60 * 6
     verification_token_max_age_seconds: int = 60 * 60 * 48
+    password_reset_token_max_age_seconds: int = 60 * 60 * 2
 
     # Encrypts a lecturer's stored database connection string. Deliberately
     # separate from secret_key - see app/tenant_crypto.py.

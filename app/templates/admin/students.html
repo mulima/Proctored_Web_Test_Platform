@@ -26,6 +26,9 @@
         {% if not student.is_verified %}
         <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/verify') }}">
           <button type="submit">Confirm manually</button></form>{% endif %}
+        {% if not student.is_verified %}
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/resend_verification') }}">
+          <button type="submit">Resend confirmation</button></form>{% endif %}
         {% if not student.is_approved %}
         <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/approve') }}">
           <button type="submit">Approve</button></form>{% endif %}

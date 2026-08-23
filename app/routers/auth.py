@@ -21,8 +21,11 @@ from app.models_course import Student
 from app.models_platform import Lecturer
 from app.security import (
     hash_password,
+    make_password_reset_token,
     make_verification_token,
     password_problems,
+    password_reset_token_matches_hash,
+    read_password_reset_token,
     read_verification_token,
     set_session_cookie,
     tokens_match,
@@ -77,6 +80,35 @@ def send_verification_email(
         db,
         "VERIFICATION_EMAIL_SENT" if delivered else "VERIFICATION_EMAIL_FAILED",
         f"Verification link to {student.email}",
+        level="INFO" if delivered else "ERROR",
+        student_id=student.id,
+        request=request,
+    )
+    return delivered
+
+
+def send_password_reset_email(
+    db: Session, student: Student, lecturer: Lecturer, request: Request
+) -> bool:
+    token = make_password_reset_token(student.email, lecturer.slug, student.password_hash)
+    link = f"{settings.base_url.rstrip('/')}/{lecturer.slug}/reset-password?token={token}"
+    body = (
+        f"Hello {student.full_name},\n\n"
+        f"A password reset was requested for your {lecturer.brand} account.\n\n"
+        "Set a new password by opening this link:\n\n"
+        f"{link}\n\n"
+        f"The link expires in {settings.password_reset_token_max_age_seconds // 3600} hour(s).\n"
+        "If you did not request this, you can ignore this message.\n\n"
+        f"{lecturer.footer}\n"
+    )
+    delivered = send(
+        Message(to=student.email, subject=f"Reset your {lecturer.brand} password", body=body),
+        lecturer,
+    )
+    logging_service.record(
+        db,
+        "PASSWORD_RESET_EMAIL_SENT" if delivered else "PASSWORD_RESET_EMAIL_FAILED",
+        f"Password reset link to {student.email}",
         level="INFO" if delivered else "ERROR",
         student_id=student.id,
         request=request,
@@ -250,6 +282,114 @@ def resend(
         send_verification_email(db, student, lecturer, request)
     # Always the same answer, so this cannot be used to enumerate who has registered.
     return templates.TemplateResponse(request, "resend.html", {"sent": True})
+
+
+@router.get("/forgot-password", response_class=HTMLResponse)
+def forgot_password_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
+    return templates.TemplateResponse(request, "forgot_password.html", {"sent": False})
+
+
+@router.post("/forgot-password", response_class=HTMLResponse)
+def forgot_password(
+    request: Request,
+    email: str = Form(...),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
+    email = _normalise_email(email)
+    student = db.scalar(select(Student).where(func.lower(Student.email) == email))
+    if student and student.is_verified and not student.is_blocked:
+        send_password_reset_email(db, student, lecturer, request)
+    logging_service.record(
+        db,
+        "PASSWORD_RESET_REQUESTED",
+        email,
+        student_id=student.id if student else None,
+        request=request,
+    )
+    # Always the same answer, so this cannot be used to enumerate who has registered.
+    return templates.TemplateResponse(request, "forgot_password.html", {"sent": True})
+
+
+def _student_from_reset_token(db: Session, lecturer: Lecturer, token: str) -> Student | None:
+    resolved = read_password_reset_token(token, lecturer.slug)
+    if not resolved:
+        return None
+    email, marker = resolved
+    student = db.scalar(select(Student).where(func.lower(Student.email) == email))
+    if student is None or not student.is_verified or student.is_blocked:
+        return None
+    if not password_reset_token_matches_hash(marker, student.password_hash):
+        return None
+    return student
+
+
+@router.get("/reset-password", response_class=HTMLResponse)
+def reset_password_form(
+    request: Request,
+    token: str = "",
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
+    student = _student_from_reset_token(db, lecturer, token)
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {
+            "token": token,
+            "valid": bool(student),
+            "errors": [],
+            "done": False,
+        },
+        status_code=200 if student else 400,
+    )
+
+
+@router.post("/reset-password", response_class=HTMLResponse)
+def reset_password(
+    request: Request,
+    token: str = Form(""),
+    password: str = Form(...),
+    confirm_password: str = Form(...),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
+    student = _student_from_reset_token(db, lecturer, token)
+    if student is None:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"token": token, "valid": False, "errors": [], "done": False},
+            status_code=400,
+        )
+
+    errors: list[str] = []
+    if password != confirm_password:
+        errors.append("The two passwords do not match.")
+    errors.extend(password_problems(password, course_code=lecturer.course_code))
+
+    if errors:
+        return templates.TemplateResponse(
+            request,
+            "reset_password.html",
+            {"token": token, "valid": True, "errors": errors, "done": False},
+            status_code=400,
+        )
+
+    student.password_hash = hash_password(password)
+    db.commit()
+    logging_service.record(
+        db,
+        "PASSWORD_RESET",
+        student.email,
+        student_id=student.id,
+        request=request,
+    )
+    return templates.TemplateResponse(
+        request,
+        "reset_password.html",
+        {"token": "", "valid": True, "errors": [], "done": True},
+    )
 
 
 @router.get("/login", response_class=HTMLResponse)
