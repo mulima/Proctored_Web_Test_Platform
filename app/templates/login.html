@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}Sign in &middot; {{ settings.brand }}{% endblock %}
+{% block title %}Sign in &middot; {{ course().brand }}{% endblock %}
 {% block content %}
 <section class="card narrow">
   <h1>Sign in</h1>
   {% if note %}<p class="notice">{{ note }}</p>{% endif %}
   {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
-  <form method="post" action="/login">
+  <form method="post" action="{{ course_url('/login') }}">
     <label>Email address<input type="email" name="email" required></label>
     <label>Password<input type="password" name="password" required></label>
     <button class="primary" type="submit">Sign in</button>
   </form>
-  <p class="muted">No account yet? <a href="/register">Register</a></p>
+  <p class="muted">No account yet? <a href="{{ course_url('/register') }}">Register</a></p>
 </section>
 {% endblock %}

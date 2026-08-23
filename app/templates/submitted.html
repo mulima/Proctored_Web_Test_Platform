@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/logout">Sign out</a>{% endblock %}
+{% block nav %}<a href="{{ course_url('/') }}">Dashboard</a><a href="{{ course_url('/logout') }}">Sign out</a>{% endblock %}
 {% block content %}
 <section class="card">
   <h1>Submission complete</h1>
@@ -9,7 +9,7 @@
        ({{ attempt.submission_mode }}).</p>
     {% if attempt.auto_submit_reason %}<p class="muted">{{ attempt.auto_submit_reason }}</p>{% endif %}
     <p>A copy has gone to your lecturer. You can open your own copy below.</p>
-    <p><a class="button primary" href="/my-submission.pdf" target="_blank">Open my submission</a></p>
+    <p><a class="button primary" href="{{ course_url('/my-submission.pdf') }}" target="_blank">Open my submission</a></p>
     {% if attempt.strike_count %}
       <p class="muted">{{ attempt.strike_count }} proctoring incident(s) were recorded during your
       sitting and are listed at the end of your paper. A recorded incident is a note that

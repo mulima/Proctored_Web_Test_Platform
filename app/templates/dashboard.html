@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/logout">Sign out</a>{% endblock %}
+{% block nav %}<a href="{{ course_url('/') }}">Dashboard</a><a href="{{ course_url('/logout') }}">Sign out</a>{% endblock %}
 {% block content %}
 <section class="card">
   <h1>Hello, {{ student.full_name }}</h1>
@@ -17,7 +17,7 @@
   <h2>{{ exam.title }} &mdash; submitted</h2>
   <p>You submitted this paper on
   {{ attempt.submitted_at.strftime('%d %B %Y at %H:%M') }} UTC. It cannot be sat again.</p>
-  <p><a class="button" href="/submitted">See your submission</a></p>
+  <p><a class="button" href="{{ course_url('/submitted') }}">See your submission</a></p>
 </section>
 {% else %}
 <section class="card">
@@ -45,7 +45,7 @@
     <p class="notice">You have already started this paper. Your timer is still running and
     your answers are saved.</p>
   {% endif %}
-  <form method="post" action="/start">
+  <form method="post" action="{{ course_url('/start') }}">
     <button class="primary big" type="submit">
       {% if attempt %}Continue the test{% else %}Start the test{% endif %}
     </button>

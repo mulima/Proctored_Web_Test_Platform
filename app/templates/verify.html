@@ -3,7 +3,7 @@
 <section class="card narrow">
   <h1>{% if ok %}Email confirmed{% else %}Link not valid{% endif %}</h1>
   <p>{{ message }}</p>
-  {% if ok %}<p><a class="button primary" href="/login">Sign in</a></p>
-  {% else %}<p><a class="button" href="/resend">Request a new link</a></p>{% endif %}
+  {% if ok %}<p><a class="button primary" href="{{ course_url('/login') }}">Sign in</a></p>
+  {% else %}<p><a class="button" href="{{ course_url('/resend') }}">Request a new link</a></p>{% endif %}
 </section>
 {% endblock %}

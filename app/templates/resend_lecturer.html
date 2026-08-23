@@ -1,14 +1,15 @@
 {% extends "base.html" %}
+{% block title %}Resend confirmation &middot; {{ app_name }}{% endblock %}
 {% block content %}
 <section class="card narrow">
   <h1>Resend the confirmation link</h1>
   {% if sent %}
-    <p>If that address has an account waiting to be confirmed, a new link is on its way.</p>
+    <p>If that address has a lecturer account waiting to be confirmed, a new link is on its way.</p>
     <p class="muted">The same answer is given whether or not the address is registered, so
     this page cannot be used to find out who has signed up.</p>
-    <p><a class="button" href="{{ course_url('/login') }}">Back to sign in</a></p>
+    <p><a class="button" href="/">Back to the start</a></p>
   {% else %}
-    <form method="post" action="{{ course_url('/resend') }}">
+    <form method="post" action="/resend-lecturer">
       <label>Email address<input type="email" name="email" required></label>
       <button class="primary" type="submit">Send the link again</button>
     </form>

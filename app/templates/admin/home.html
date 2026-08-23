@@ -27,14 +27,14 @@
       <td>{{ exam.questions|length }}</td>
       <td>{{ exam.duration_minutes }} min</td>
       <td>{% if exam.is_open %}<span class="chip ok">OPEN</span>{% else %}<span class="chip">closed</span>{% endif %}</td>
-      <td><a href="/admin/exams/{{ exam.id }}">Edit</a></td>
+      <td><a href="{{ course_url('/admin/exams/' ~ exam.id) }}">Edit</a></td>
     </tr>
     {% endfor %}
   </table></div>
   {% else %}<p class="muted">No exams yet. Create one below.</p>{% endif %}
 
   <h3>New exam</h3>
-  <form method="post" action="/admin/exams">
+  <form method="post" action="{{ course_url('/admin/exams') }}">
     <label>Title<input name="title" placeholder="First Semester Test 1" required></label>
     <label>Duration (minutes)<input type="number" name="duration_minutes" value="90" min="1"></label>
     <label>Total marks<input type="number" name="total_marks" value="100"></label>
@@ -55,7 +55,7 @@
       <td>{{ attempt.started_at.strftime('%d %b %H:%M') }}</td>
       <td>{% if attempt.is_locked %}submitted{% else %}in progress{% endif %}</td>
       <td>{{ attempt.strike_count }}{% if attempt.flagged %} <span class="chip bad">FLAGGED</span>{% endif %}</td>
-      <td><a href="/admin/attempts/{{ attempt.id }}">Open</a></td>
+      <td><a href="{{ course_url('/admin/attempts/' ~ attempt.id) }}">Open</a></td>
     </tr>
     {% endfor %}
   </table></div>

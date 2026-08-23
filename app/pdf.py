@@ -18,7 +18,8 @@ from reportlab.lib.units import mm
 from reportlab.platypus import PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.config import settings
-from app.models import Attempt
+from app.models_course import Attempt
+from app.models_platform import Lecturer
 
 
 def clean_filename(value: str) -> str:
@@ -30,16 +31,16 @@ def escape(value: str) -> str:
     return html.escape(value or "No answer").replace("\n", "<br/>")
 
 
-def filename_for(attempt: Attempt) -> str:
+def filename_for(attempt: Attempt, lecturer: Lecturer) -> str:
     stamp = (attempt.submitted_at or datetime.utcnow()).strftime("%Y%m%d_%H%M%S")
     return (
-        f"{clean_filename(settings.file_prefix)}_{clean_filename(attempt.exam.title)}_"
+        f"{clean_filename(lecturer.file_prefix)}_{clean_filename(attempt.exam.title)}_"
         f"{clean_filename(attempt.student.computer_number)}_"
         f"{clean_filename(attempt.student.full_name)}_{stamp}.pdf"
     )
 
 
-def build(attempt: Attempt, answers_by_question: dict[int, "object"]) -> bytes:
+def build(attempt: Attempt, answers_by_question: dict[int, "object"], lecturer: Lecturer) -> bytes:
     styles = getSampleStyleSheet()
     title = ParagraphStyle(
         "DocTitle", parent=styles["Title"], fontName="Helvetica-Bold", fontSize=16, leading=20
@@ -77,8 +78,8 @@ def build(attempt: Attempt, answers_by_question: dict[int, "object"]) -> bytes:
         summary += " - FLAGGED FOR REVIEW"
 
     story = [
-        Paragraph(settings.footer.upper(), title),
-        Paragraph(settings.subtitle, heading),
+        Paragraph(lecturer.footer.upper(), title),
+        Paragraph(lecturer.subtitle, heading),
         Paragraph(f"{attempt.exam.title} - Student Submission", heading),
         Spacer(1, 6),
     ]

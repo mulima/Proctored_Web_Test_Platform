@@ -15,7 +15,7 @@
           {% else %}<em>in progress</em>{% endif %}</td>
       <td>{{ attempt.strike_count }}{% if attempt.flagged %} <span class="chip bad">FLAGGED</span>{% endif %}</td>
       <td>{{ attempt.snapshots|length }}</td>
-      <td><a href="/admin/attempts/{{ attempt.id }}">Open</a></td>
+      <td><a href="{{ course_url('/admin/attempts/' ~ attempt.id) }}">Open</a></td>
     </tr>
     {% else %}<tr><td colspan="8" class="muted">Nothing here.</td></tr>{% endfor %}
   </table></div>

@@ -2,9 +2,14 @@
 
 A practical walkthrough. The README explains the design; this is what to actually do.
 
+This now happens in two stages: someone deploys the **platform** once (Part 1), then
+each lecturer **signs up** and connects their own database (Part 2) - that second
+stage is what used to be "deploy a second instance for a second course." One running
+platform now serves many courses.
+
 ---
 
-## Part 1 — first deployment (once)
+## Part 1 — deploying the platform (once, by whoever operates it)
 
 ### 1. Push the code
 
@@ -18,77 +23,118 @@ gh repo create test-platform --private --source=. --push
 
 1. railway.app → **New Project → Deploy from GitHub repo** → pick the repo.
 2. The first build will fail or the app will start unhealthy. That is expected — there is
-   no database and no admin password yet.
+   no platform database yet.
 
-### 3. Attach Postgres
+### 3. Attach Postgres — this is the *platform* database
 
 **New → Database → PostgreSQL**, in the same project. Railway injects `DATABASE_URL` into
-the app service.
+the app service. This holds lecturer accounts and course settings, not any course's
+own data — each lecturer connects their own database for that, separately, after
+signing up.
 
-> Check this before every real sitting. Without `DATABASE_URL` the app silently falls back
-> to a SQLite file inside the container, and on Railway that file is destroyed on the next
-> deploy — taking every submission with it.
+> Check this before the platform is used for anything real. Without `DATABASE_URL` the
+> app silently falls back to a SQLite file inside the container, and on Railway that
+> file is destroyed on the next deploy — taking every lecturer account with it.
 
 ### 4. Set the variables
 
 App service → **Variables**:
 
-One deployment serves one course. The course fields are what make this instance specific;
-everything else is the platform itself.
-
 ```
-ADMIN_EMAIL=mchibuye@gmail.com
-ADMIN_PASSWORD=<a long password you choose>
 SECRET_KEY=<paste the output of the command below>
+CREDENTIAL_ENCRYPTION_KEY=<paste the output of the second command below>
 BASE_URL=https://<your-app>.up.railway.app
 MAIL_BACKEND=smtp
-MAIL_FROM=MBS6011 Test Platform <no-reply@yourdomain.zm>
+MAIL_FROM=Proctored Test Platform <no-reply@yourdomain.zm>
 SMTP_HOST=smtp.gmail.com
 SMTP_PORT=587
-SMTP_USERNAME=<your gmail address>
+SMTP_USERNAME=<a gmail address>
 SMTP_PASSWORD=<a 16-character Google app password, not your login password>
 APP_NAME=Proctored Web Test Platform
-COURSE_CODE=MBS6011
-COURSE_TITLE=MBS6011: E-Business Strategies and Models
-INSTITUTION=University of Zambia - Graduate School of Business
 ```
 
-The three course fields are optional. Left blank the platform runs and describes itself
-generically, which is fine for a trial. Set them before a real sitting so students see the
-course they registered for. **To run a second course, deploy a second instance** with its
-own database and its own course variables — one deployment holds one roster and one open
-paper at a time.
+These are platform-wide - shared by every course. Course-specific fields (code, title,
+institution, database) are no longer env vars; each lecturer sets those themselves,
+per course, at `/<slug>/admin/setup` after signing up.
 
-Generate the secret key:
+Generate the two keys:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_urlsafe(48))"
+python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ```
 
-`BASE_URL` must match the deployed domain exactly. Verification links are built from it,
-and a wrong value sends every student to a dead address.
+`BASE_URL` must match the deployed domain exactly. Every verification and alert link,
+for every course, is built from it — a wrong value sends every student on every course
+to a dead address.
 
 ### 5. Redeploy and check
 
 Watch the deploy log for:
 
 ```
-INFO  [alembic.runtime.migration] Running upgrade  -> <revision>, initial schema
-[startup] Admin account created for <your email>.
+INFO  [alembic.runtime.migration] Running upgrade  -> <revision>, platform schema: lecturers and platform_logs
 ```
 
 Then open `https://<your-app>.up.railway.app/healthz` — it should return `{"ok": true}`.
 
-### 6. Sign in
+---
 
-`/admin/login`, with `ADMIN_EMAIL` and `ADMIN_PASSWORD`.
+## Part 2 — a lecturer setting up a course
 
-There is no password reset flow, by design. To change the admin password, change
-`ADMIN_PASSWORD` and redeploy; the new value takes effect at start-up.
+This is what replaces "deploy a second instance." No Railway access is needed for this
+part - it all happens through the app.
+
+### 1. Sign up
+
+`https://<your-app>.up.railway.app/signup` — email, password, and a course address
+(`slug`): students will reach the course at `/<slug>/register`, `/<slug>/login`, etc.
+
+### 2. Confirm your email
+
+A link is sent immediately - nothing else, including signing in, works until you
+follow it. Lost it? `/resend-lecturer`. Then sign in at `/<slug>/admin/login`.
+
+### 3. Provision a database
+
+A free [Supabase](https://supabase.com) project works well. Run the SQL in
+[`docs/DATABASE_SCHEMA.md`](DATABASE_SCHEMA.md) against it once - paste
+[`docs/DATABASE_SCHEMA.sql`](DATABASE_SCHEMA.sql) directly into Supabase's SQL editor,
+or run the equivalent Alembic migration yourself if you'd rather. Two things matter
+about which connection string you copy:
+
+- Use the **direct** or **session-pooler** string, not a transaction-mode pooler
+  (Supabase's port-6543 one) - DDL and some driver behaviour aren't reliable through
+  transaction pooling.
+- If the platform is deployed somewhere without IPv6 egress (Railway, notably) and your
+  database host resolves IPv6-only, use the session-pooler / IPv4-reachable string
+  instead of the direct one, or the platform's connection attempt will time out with
+  "Network is unreachable."
+
+### 3. Connect it
+
+Paste the connection string at `/<slug>/admin/setup`. The platform connects, checks
+every expected table exists, and only then activates the course - if a table's
+missing, it says which one and nothing is saved. Nothing else (registration, sign-in,
+sitting) works until this succeeds.
+
+### 4. Set branding and build the paper
+
+Same page: course code, title and institution - they appear on every page, email and
+PDF for this course from here on.
+
+Then `/<slug>/admin`: create an exam, set the duration and how many Section C
+questions to choose, add questions or paste a `quiz_data.json` into **Bulk import**.
+Check the paper. **Then** click Open — that releases it to every verified student on
+*this course* at once and closes any other open exam for it.
+
+There is no password reset flow for a lecturer account, by design, matching the
+original admin model. If you're locked out, that needs a direct database fix on the
+platform database (`lecturers` table) - see `app/security.py`'s `hash_password`.
 
 ---
 
-## Part 2 — optional: switch on phone detection
+## Optional: switch on phone detection
 
 Without a model the platform runs fine, but the phone detector is off and says so. To
 enable it you need two files, both too large for Git (they are in `.gitignore`):
@@ -105,7 +151,8 @@ distribution and put them in `app/static/js/`.
 
 Then either commit them (removing the `.gitignore` lines) or, better, host them as Railway
 volume contents or on a CDN you control and point `MBS_DATA.modelUrl` and `ortUrl` at
-them in `app/templates/sit.html`.
+them in `app/templates/sit.html`. This is a platform-wide setting - one model file serves
+every course on the deployment.
 
 Bear the size in mind: the Open Images model is roughly 14 MB and every student downloads
 it once, at the start of the sitting. Thirty students on one campus link is 400 MB in a
@@ -114,33 +161,36 @@ the full-screen rules and physical invigilation.
 
 ---
 
-## Part 3 — before each sitting
+## Before each sitting (per course)
 
-- [ ] `DATABASE_URL` is present and points at Postgres.
-- [ ] `BASE_URL` matches the live domain.
-- [ ] Send one test email — register a throwaway account and confirm the link arrives.
-      A `MAIL_BACKEND` that silently fails is the single most likely thing to go wrong.
-- [ ] Build the paper in the admin panel and read it through. Check the Section C count.
+- [ ] The course's database is connected and shows as ready at `/<slug>/admin/setup`.
+- [ ] `BASE_URL` (platform-wide) matches the live domain.
+- [ ] Send one test email — register a throwaway account on your course and confirm the
+      link arrives. A `MAIL_BACKEND` that silently fails is the single most likely thing
+      to go wrong.
+- [ ] Build the paper in `/<slug>/admin` and read it through. Check the Section C count.
 - [ ] Sit the paper yourself end to end on a machine like the students'. Confirm the PDF
-      arrives in the admin inbox with the incident appendix.
-- [ ] Delete your own test attempt and account from the roster.
-- [ ] Tell students to register **at least a day before**, not on the morning.
+      arrives in your inbox with the incident appendix.
+- [ ] Delete your own test attempt and account from the roster (`/<slug>/admin/students`).
+- [ ] Tell students to register **at least a day before**, not on the morning, at
+      `/<slug>/register`.
 - [ ] Point students at `/privacy` and get their acknowledgement.
 - [ ] Tell them to close Zoom, Teams and anything else using the camera — a camera already
       held by another application will fail to start and be recorded as unavailable.
-- [ ] Open the exam only when you are ready. Opening releases it to everyone at once.
+- [ ] Open the exam only when you are ready. Opening releases it to everyone on your
+      course at once - it has no effect on any other course on the platform.
 
 ---
 
-## Part 4 — during the sitting
+## During the sitting
 
-The admin panel updates live:
+The admin panel (`/<slug>/admin`) updates live:
 
 - **Overview** — attempts in progress, flagged count.
 - **Flagged** — papers that reached the strike threshold. Each one shows the incident log
   and the evidence snapshots side by side.
-- **Logs** — every event, searchable. `INCIDENT_`, `LOGIN_FAILED` and `*_EMAIL_FAILED` are
-  the ones worth watching.
+- **Logs** — every event on this course, searchable. `INCIDENT_`, `LOGIN_FAILED` and
+  `*_EMAIL_FAILED` are the ones worth watching.
 
 Alert emails arrive as flags are raised, rate-limited to one per candidate every few
 minutes so one restless student cannot bury the inbox.
@@ -156,7 +206,7 @@ recorded so the failure is on the record at the time rather than argued about la
 
 ---
 
-## Part 5 — after the sitting
+## After the sitting
 
 1. Close the exam in the admin panel.
 2. Every submission is already in your inbox as a PDF with the incident appendix.
@@ -169,10 +219,15 @@ recorded so the failure is on the record at the time rather than argued about la
 
 ## Costs and limits, honestly
 
-Railway's starter plan runs this comfortably for a cohort of this size: the server does no
-inference during the sitting, only bookkeeping. Storage is the thing that grows —
-submission PDFs and evidence snapshots live in Postgres. A 40-student sitting with a
-handful of snapshots each is a few tens of megabytes.
+Railway's starter plan runs this comfortably for a cohort of this size per course: the
+server does no inference during a sitting, only bookkeeping. Storage is the thing that
+grows — submission PDFs and evidence snapshots live in each course's own database. A
+40-student sitting with a handful of snapshots each is a few tens of megabytes.
+
+Every course's database is a separate connection pool this one process holds open once
+it's been used. That's unremarkable for a handful of courses; if the platform ever hosts
+a large number of simultaneously-active courses, connection-pool pressure across all of
+them at once is the thing to watch (`app/tenant_db.py` has no eviction yet).
 
 The container sleeps when idle on some plans. The first request after a sleep is slow,
 which matters if a student is the first to arrive. Hit the site yourself a few minutes

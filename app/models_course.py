@@ -1,12 +1,25 @@
-"""Database schema.
+"""Course schema: everything one lecturer's course actually contains.
 
-Two things here are deliberately durable rather than convenient:
+This is the schema documented in docs/DATABASE_SCHEMA.md as what a lecturer's
+own database must already have before it can be connected. It is identical to
+the app's original single-tenant schema, minus the old `admins` table - that
+concept moved to `Lecturer` in app/models_platform.py, in the platform
+database, not here.
 
-  * `app_logs` keeps every event the platform emits, so a dispute months later can be
-    reconstructed without the original browser or machine;
-  * `snapshots` stores the evidence image bytes in the database rather than on disk,
-    because Railway containers have an ephemeral filesystem and a JPEG written beside
-    the app disappears on the next deploy.
+`CourseBase` is intentionally its own declarative base, separate from the
+platform's `Base` (app/db.py) - these tables are never created against this
+app's own engine. A `Session` bound to whichever lecturer's database is
+active for the current request (app/tenant_db.py) is what actually reads and
+writes these models; the classes below are just the shared mapping, reusable
+against any such session.
+
+Two things here are still deliberately durable rather than convenient:
+
+  * `app_logs` keeps every event a course emits, so a dispute months later can
+    be reconstructed without the original browser or machine;
+  * `snapshots` stores the evidence image bytes in the database rather than on
+    disk, since a lecturer's own database is the only storage this app can
+    assume survives a redeploy of the app itself.
 """
 
 from datetime import datetime
@@ -25,22 +38,14 @@ from sqlalchemy import (
     UniqueConstraint,
     func,
 )
-from sqlalchemy.orm import Mapped, mapped_column, relationship
-
-from app.db import Base
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
-class Admin(Base):
-    __tablename__ = "admins"
-
-    id: Mapped[int] = mapped_column(Integer, primary_key=True)
-    email: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    password_hash: Mapped[str] = mapped_column(String(255))
-    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
-    password_set_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+class CourseBase(DeclarativeBase):
+    pass
 
 
-class Student(Base):
+class Student(CourseBase):
     __tablename__ = "students"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -68,7 +73,7 @@ class Student(Base):
         return self.is_verified and self.is_approved and not self.is_blocked
 
 
-class Exam(Base):
+class Exam(CourseBase):
     __tablename__ = "exams"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -88,7 +93,7 @@ class Exam(Base):
     attempts: Mapped[list["Attempt"]] = relationship(back_populates="exam")
 
 
-class Question(Base):
+class Question(CourseBase):
     __tablename__ = "questions"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -106,7 +111,7 @@ class Question(Base):
     __table_args__ = (Index("ix_questions_exam_section_order", "exam_id", "section", "order_index"),)
 
 
-class Attempt(Base):
+class Attempt(CourseBase):
     __tablename__ = "attempts"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -149,7 +154,7 @@ class Attempt(Base):
     __table_args__ = (UniqueConstraint("exam_id", "student_id", name="uq_attempt_exam_student"),)
 
 
-class Answer(Base):
+class Answer(CourseBase):
     __tablename__ = "answers"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -172,7 +177,7 @@ class Answer(Base):
     )
 
 
-class Incident(Base):
+class Incident(CourseBase):
     __tablename__ = "incidents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -191,7 +196,7 @@ class Incident(Base):
     snapshots: Mapped[list["Snapshot"]] = relationship(back_populates="incident")
 
 
-class Snapshot(Base):
+class Snapshot(CourseBase):
     __tablename__ = "snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
@@ -215,7 +220,7 @@ class Snapshot(Base):
     incident: Mapped[Incident] = relationship(back_populates="snapshots")
 
 
-class AppLog(Base):
+class AppLog(CourseBase):
     __tablename__ = "app_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)

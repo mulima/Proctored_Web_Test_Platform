@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Set up a course &middot; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Set up a course</h1>
+  <p class="muted">This creates your lecturer account and your course's address. You'll need
+  to confirm your email before you can sign in, then connect your own database - already
+  set up with the tables documented at
+  <a href="/docs/DATABASE_SCHEMA.md">/docs/DATABASE_SCHEMA.md</a>.</p>
+  {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+  <form method="post" action="/signup" autocomplete="off">
+    <label>Your email address<input type="email" name="email" value="{{ values.email or '' }}" required></label>
+    <label>Password<input type="password" name="password" required>
+      <span class="hint">At least 10 characters.</span></label>
+    <label>Confirm password<input type="password" name="confirm_password" required></label>
+    <label>Course address<input name="slug" value="{{ values.slug or '' }}" placeholder="mbs6011" required>
+      <span class="hint">Lowercase letters, numbers and hyphens. Students will reach your
+      course at {{ base_url }}/&lt;this&gt;/register</span></label>
+    <label>Course code<input name="course_code" value="{{ values.course_code or '' }}" placeholder="MBS6011"></label>
+    <label>Course title<input name="course_title" value="{{ values.course_title or '' }}" placeholder="MBS6011: E-Business Strategies and Models"></label>
+    <label>Institution<input name="institution" value="{{ values.institution or '' }}" placeholder="University of Zambia"></label>
+    <button class="primary" type="submit">Create my course</button>
+  </form>
+  <p class="muted">Already set up? <a href="/">Find your course</a></p>
+</section>
+{% endblock %}

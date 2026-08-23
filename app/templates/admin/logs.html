@@ -3,7 +3,7 @@
 <h1>Application log</h1>
 <p class="muted">{{ total }} entries held. This table is the durable record &mdash; it lives in
 the database, not in container output, so it survives restarts and redeploys.</p>
-<form method="get" action="/admin/logs">
+<form method="get" action="{{ course_url('/admin/logs') }}">
   <label>Search<input name="q" value="{{ q }}" placeholder="event type or message"></label>
   <label>Level
     <select name="level">

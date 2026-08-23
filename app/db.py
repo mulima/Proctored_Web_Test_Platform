@@ -1,4 +1,7 @@
-"""Engine and session wiring.
+"""Engine and session wiring for the PLATFORM database - lecturer accounts and their
+course settings, not any course's own data. See app/models_platform.py for what
+lives here, and app/tenant_db.py for the equivalent machinery built per-lecturer
+against whatever database each one configures.
 
 The schema is owned by Alembic, never by create_all. A deploy runs migrations in the
 release phase; the app itself never alters tables, so data survives every redeploy.

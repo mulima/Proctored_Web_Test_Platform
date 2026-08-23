@@ -1,0 +1,73 @@
+{% extends "base.html" %}
+{% block title %}{{ app_name }}{% endblock %}
+{% block content %}
+<section class="card hero">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <p class="hero-eyebrow">Secure Course Assessment Platform</p>
+      <h1 class="product-name">{{ app_name }}</h1>
+      <p class="product-tagline"><em>Assessment with clarity and integrity.</em></p>
+      <p class="hero-lead">
+        Run proctored web tests per course, with each lecturer owning their own
+        course setup and database. Students register, verify email, sit tests,
+        and lecturers review logs, incidents, and submissions from one portal.
+      </p>
+      <div class="hero-actions">
+        <a class="button primary" href="/signup">Admin registration</a>
+        <a class="button" href="/privacy">What this system records</a>
+      </div>
+    </div>
+    <div class="hero-logo-slot">
+      <img
+        class="hero-logo"
+        src="/static/images/assessment-platform-hero.png"
+        alt="Secure online assessment represented by a shield, checkmark, browser window and open book"
+      >
+    </div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Open your course area</h2>
+  <p class="muted">
+    Enter your course slug (for example <code>econ101</code>) to generate the correct links.
+  </p>
+  <div class="slug-builder">
+    <label for="slugInput">Course slug</label>
+    <input id="slugInput" type="text" value="your-course-slug" autocomplete="off">
+  </div>
+  <div class="quick-links">
+    <a id="studentRegisterLink" class="button" href="/your-course-slug/register">Student registration</a>
+    <a id="studentLoginLink" class="button" href="/your-course-slug/login">Student login</a>
+    <a id="adminLoginLink" class="button" href="/your-course-slug/admin/login">Existing admin login</a>
+  </div>
+  <p class="fine">If this is a new course, create the admin account first using Admin registration.</p>
+</section>
+
+<script>
+(() => {
+  const input = document.getElementById("slugInput");
+  const studentRegisterLink = document.getElementById("studentRegisterLink");
+  const studentLoginLink = document.getElementById("studentLoginLink");
+  const adminLoginLink = document.getElementById("adminLoginLink");
+
+  function normaliseSlug(raw) {
+    return (raw || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "")
+      .replace(/^-+|-+$/g, "") || "your-course-slug";
+  }
+
+  function updateLinks() {
+    const slug = normaliseSlug(input.value);
+    studentRegisterLink.href = `/${slug}/register`;
+    studentLoginLink.href = `/${slug}/login`;
+    adminLoginLink.href = `/${slug}/admin/login`;
+  }
+
+  input.addEventListener("input", updateLinks);
+  updateLinks();
+})();
+</script>
+{% endblock %}

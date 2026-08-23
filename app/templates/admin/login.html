@@ -3,12 +3,10 @@
 <section class="card narrow">
   <h1>Administrator sign in</h1>
   {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
-  <form method="post" action="/admin/login">
-    <label>Email<input type="email" name="email" value="{{ settings.admin_email }}" required></label>
+  <form method="post" action="{{ course_url('/admin/login') }}">
+    <label>Email<input type="email" name="email" value="{{ prefill_email }}" required></label>
     <label>Password<input type="password" name="password" required></label>
     <button class="primary" type="submit">Sign in</button>
   </form>
-  <p class="muted">The password is whatever ADMIN_PASSWORD was set to when the app last
-  started. To change it, change the variable and redeploy.</p>
 </section>
 {% endblock %}

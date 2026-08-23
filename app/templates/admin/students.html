@@ -1,7 +1,9 @@
 {% extends "admin/_base.html" %}
 {% block admin_content %}
 <h1>Students</h1>
-<form method="get" action="/admin/students">
+{% if request.query_params.get('error') == 'inuse' %}
+<ul class="errors"><li>Students who have started or submitted an attempt cannot be deleted — that record is proctoring evidence. Block the account instead.</li></ul>{% endif %}
+<form method="get" action="{{ course_url('/admin/students') }}">
   <label>Search<input name="q" value="{{ q }}" placeholder="name, email or computer number"></label>
   <button type="submit">Search</button>
 </form>
@@ -22,17 +24,22 @@
       <td class="muted">{{ student.created_at.strftime('%d %b %H:%M') }}</td>
       <td>
         {% if not student.is_verified %}
-        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/verify">
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/verify') }}">
           <button type="submit">Confirm manually</button></form>{% endif %}
         {% if not student.is_approved %}
-        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/approve">
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/approve') }}">
           <button type="submit">Approve</button></form>{% endif %}
         {% if student.is_blocked %}
-        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/unblock">
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/unblock') }}">
           <button type="submit">Unblock</button></form>
         {% else %}
-        <form class="inline-form" method="post" action="/admin/students/{{ student.id }}/block">
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/block') }}">
           <button type="submit">Block</button></form>{% endif %}
+        {% if not student.attempts %}
+        <form class="inline-form" method="post" action="{{ course_url('/admin/students/' ~ student.id ~ '/delete') }}"
+              onsubmit="return confirm('Delete {{ student.full_name }} ({{ student.computer_number }})? This cannot be undone.');">
+          <button type="submit" class="danger">Delete</button></form>
+        {% endif %}
       </td>
     </tr>
     {% else %}<tr><td colspan="6" class="muted">Nobody has registered yet.</td></tr>{% endfor %}

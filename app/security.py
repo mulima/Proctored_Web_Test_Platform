@@ -15,6 +15,7 @@ _hasher = PasswordHasher()
 
 SESSION_SALT = "exam.session"
 VERIFY_SALT = "exam.verify"
+LECTURER_VERIFY_SALT = "platform.lecturer.verify"
 
 
 def hash_password(password: str) -> str:
@@ -54,24 +55,75 @@ def read_session_cookie(token: str | None) -> dict[str, Any] | None:
         return None
 
 
-def make_verification_token(email: str) -> str:
-    """Issue a verification token.
+def set_session_cookie(response, *, role: str, slug: str, id: int) -> None:
+    """The one place a session cookie gets written, for students and lecturers alike.
+
+    The payload carries `slug` alongside `role`/`id` because under multi-tenancy a bare
+    numeric id means nothing on its own - it's only meaningful within one specific
+    lecturer's database. `current_student`/`current_lecturer` (app/deps.py) reject a
+    cookie whose slug doesn't match the URL being requested, same as an invalid
+    signature. The cookie is also scoped with Path=/{slug} as defense in depth, so a
+    browser won't even attach one course's cookie to another course's requests.
+    """
+    response.set_cookie(
+        settings.session_cookie,
+        make_session_cookie({"role": role, "slug": slug, "id": id}),
+        max_age=settings.session_max_age_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=settings.base_url.startswith("https"),
+        path=f"/{slug}",
+    )
+
+
+def make_verification_token(email: str, slug: str) -> str:
+    """Issue a verification token, scoped to one course.
 
     The nonce matters. itsdangerous stamps the payload with a whole-second timestamp, so
     without it two links issued for the same address inside the same second come out
     byte-identical - and a resend would not actually supersede the link it replaced.
     With it, every issued link is distinct, and because only the newest is stored on the
     student row, following an older one fails.
+
+    The slug matters too: the same email address could genuinely register with two
+    different lecturers' courses, in two different databases. A token only proves "this
+    email was issued a link for *this* course."
     """
     return _serializer(VERIFY_SALT).dumps(
+        {"email": email.lower(), "slug": slug, "n": secrets.token_urlsafe(9)}
+    )
+
+
+def read_verification_token(token: str, slug: str) -> str | None:
+    """Returns the email the token was issued for, or None if bad, expired, or
+    issued for a different course."""
+    try:
+        data = _serializer(VERIFY_SALT).loads(
+            token, max_age=settings.verification_token_max_age_seconds
+        )
+    except (BadSignature, SignatureExpired):
+        return None
+    data = data or {}
+    if data.get("slug") != slug:
+        return None
+    return data.get("email")
+
+
+def make_lecturer_verification_token(email: str) -> str:
+    """Same shape as make_verification_token, but for the platform's own lecturer
+    accounts - not scoped to a slug, because a lecturer's email is globally unique
+    across the whole platform (unlike a student's, which only has to be unique
+    within one course's own database), so there's no cross-course ambiguity to
+    guard against. A distinct salt keeps a lecturer token from ever being replayed
+    as a student one or vice versa."""
+    return _serializer(LECTURER_VERIFY_SALT).dumps(
         {"email": email.lower(), "n": secrets.token_urlsafe(9)}
     )
 
 
-def read_verification_token(token: str) -> str | None:
-    """Returns the email the token was issued for, or None if bad or expired."""
+def read_lecturer_verification_token(token: str) -> str | None:
     try:
-        data = _serializer(VERIFY_SALT).loads(
+        data = _serializer(LECTURER_VERIFY_SALT).loads(
             token, max_age=settings.verification_token_max_age_seconds
         )
     except (BadSignature, SignatureExpired):
@@ -89,7 +141,7 @@ def tokens_match(stored: str | None, presented: str) -> bool:
 WEAK_PASSWORDS = {"password12", "1234567890", "qwertyuiop", "letmein123", "changeme12"}
 
 
-def password_problems(password: str) -> list[str]:
+def password_problems(password: str, course_code: str = "") -> list[str]:
     """Deliberately modest rules: long enough to matter, nothing that invites Password1!"""
     problems = []
     squashed = password.lower().replace(" ", "")
@@ -100,7 +152,7 @@ def password_problems(password: str) -> list[str]:
     if squashed in WEAK_PASSWORDS:
         problems.append("That password is too easy to guess.")
     # The course code is the first thing anyone would try for this particular site.
-    code = (settings.course_code or "").lower()
+    code = (course_code or "").lower()
     if code and len(code) >= 4 and code in squashed:
         problems.append("Do not build your password out of the course code.")
     return problems

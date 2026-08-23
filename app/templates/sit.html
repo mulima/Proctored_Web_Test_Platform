@@ -79,6 +79,7 @@
     remaining: {{ remaining }},
     currentQuestion: {{ current_question }},
     sectionCRequired: {{ exam.section_c_required }},
+    coursePrefix: {{ course_url('') | tojson }},
     modelUrl: "/static/models/phone_detector.onnx",
     ortUrl: "/static/js/ort.min.js"
   };

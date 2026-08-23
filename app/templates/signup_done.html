@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}Check your email &middot; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>Check your email</h1>
+  <p>A confirmation link is on its way to <strong>{{ email }}</strong>.</p>
+  <p class="muted">Open it to activate your lecturer account for <strong>/{{ slug }}</strong>.
+  The link works once and expires in {{ verification_token_hours }} hours. Nothing else -
+  signing in, connecting a database, building a paper - works until you've confirmed it.
+  If nothing arrives, check your spam folder, then
+  <a href="/resend-lecturer">request another</a>.</p>
+  <p><a class="button" href="/">Back to the start</a></p>
+</section>
+{% endblock %}

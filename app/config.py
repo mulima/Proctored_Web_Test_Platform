@@ -1,7 +1,10 @@
-"""Environment-driven settings.
+"""Environment-driven settings for the platform itself.
 
-Everything an invigilator or deployer can change lives here, read from the environment
-so Railway variables are the single source of truth. Nothing secret is ever committed.
+This is what the person who deploys/operates the running app sets - not any
+one course. Course identity (code, title, institution) and which database
+holds a course's data are configured per-lecturer, in the platform database,
+via /signup and /{slug}/admin/setup - see app/models_platform.py. Nothing
+here names a particular course.
 """
 
 import os
@@ -14,39 +17,33 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
-    # --- identity -----------------------------------------------------------
-    # Nothing here names a particular course. One deployment serves one course at a
-    # time, and which course that is comes entirely from the environment.
-    app_name: str = "Proctored Web Test Platform"
-    institution: str = ""
-    course_code: str = ""
-    course_title: str = ""
+    # --- identity -------------------------------------------------------------
+    app_name: str = "ClearGrade"
     base_url: str = "http://127.0.0.1:8000"
 
-    # --- database -----------------------------------------------------------
-    # Railway injects DATABASE_URL for the Postgres addon. SQLite is the local default
-    # so the app runs with no services attached.
-    database_url: str = "sqlite:///./local.db"
+    # --- platform database ------------------------------------------------------
+    # Holds lecturer accounts and their course settings - never course data itself.
+    # Railway injects DATABASE_URL for the Postgres addon. SQLite is the local
+    # default so the app runs with no services attached.
+    database_url: str = "sqlite:///./platform.db"
 
-    # --- security -----------------------------------------------------------
-    # ADMIN_PASSWORD is required in production; the admin account is created or its
-    # password reset from this value on every app start.
-    admin_email: str = "admin@example.com"
-    admin_password: str = ""
+    # --- security ---------------------------------------------------------------
     secret_key: str = ""
     session_cookie: str = "exam_session"
     session_max_age_seconds: int = 60 * 60 * 6
     verification_token_max_age_seconds: int = 60 * 60 * 48
 
-    # Off by default: students self-register ahead of the sitting and the emailed link
-    # is the gate. Turn on to make the roster an allowlist you approve by hand.
+    # Encrypts a lecturer's stored database connection string. Deliberately
+    # separate from secret_key - see app/tenant_crypto.py.
+    credential_encryption_key: str = ""
+
+    # --- registration (per-course default, a lecturer's students opt into this) --
     require_admin_approval: bool = False
-    # Optional guard on who may register at all, e.g. "unza.zm,cs.unza.zm".
     allowed_email_domains: str = ""
 
     # --- email --------------------------------------------------------------
     mail_backend: str = "console"  # console | smtp | resend
-    mail_from: str = "Test Platform <no-reply@example.com>"
+    mail_from: str = "ClearGrade <no-reply@example.com>"
     smtp_host: str = ""
     smtp_port: int = 587
     smtp_username: str = ""
@@ -78,35 +75,10 @@ class Settings(BaseSettings):
     clock_backwards_tolerance_seconds: int = 120
     log_retention_days: int = 365
 
-    # The course fields are optional, so every place that shows them needs a sensible
-    # answer when they are unset rather than a blank header or a filename starting "_".
-    @property
-    def brand(self) -> str:
-        """Short label for the header and email subjects."""
-        return self.course_code or self.app_name
-
-    @property
-    def subtitle(self) -> str:
-        return self.course_title or "Proctored online assessment"
-
-    @property
-    def file_prefix(self) -> str:
-        """Leading component of generated filenames."""
-        return self.course_code or "exam"
-
-    @property
-    def footer(self) -> str:
-        return self.institution or self.app_name
-
     @property
     def sqlalchemy_url(self) -> str:
         """Railway hands out postgres:// which SQLAlchemy 2 no longer accepts."""
-        url = self.database_url
-        if url.startswith("postgres://"):
-            url = url.replace("postgres://", "postgresql+psycopg2://", 1)
-        elif url.startswith("postgresql://"):
-            url = url.replace("postgresql://", "postgresql+psycopg2://", 1)
-        return url
+        return normalise_database_url(self.database_url)
 
     @property
     def is_postgres(self) -> bool:
@@ -115,6 +87,15 @@ class Settings(BaseSettings):
     @property
     def allowed_domains(self) -> list[str]:
         return [d.strip().lower() for d in self.allowed_email_domains.split(",") if d.strip()]
+
+
+def normalise_database_url(url: str) -> str:
+    """Shared by the platform engine and every dynamically-created tenant engine."""
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+psycopg2://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+psycopg2://", 1)
+    return url
 
 
 @lru_cache

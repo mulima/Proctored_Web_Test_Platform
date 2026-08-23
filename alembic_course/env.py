@@ -1,9 +1,11 @@
-"""Alembic environment for the PLATFORM schema (lecturer accounts and their course
-settings) - the one database this app itself is deployed against, via DATABASE_URL.
+"""Alembic environment for the COURSE schema.
 
-This has nothing to do with any lecturer's own course database. That schema is
-tracked separately, in alembic_course/, and is never migrated by this app - see
-docs/DATABASE_SCHEMA.md.
+Deliberately independent of app/config.py - this is not the platform's own
+database. The connection string comes from alembic_course.ini's own
+sqlalchemy.url, exactly like a plain `alembic init` scaffold, since whoever
+runs this (a lecturer provisioning their own database, or this repo
+generating docs/DATABASE_SCHEMA.md via --sql offline mode) is never this
+app's own deployment.
 """
 
 from logging.config import fileConfig
@@ -11,21 +13,19 @@ from logging.config import fileConfig
 from alembic import context
 from sqlalchemy import engine_from_config, pool
 
-from app.config import settings
-from app.db import Base
-from app import models_platform  # noqa: F401  - imported for its side effect of registering tables
+from app.models_course import CourseBase
 
 config = context.config
-config.set_main_option("sqlalchemy.url", settings.sqlalchemy_url)
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = CourseBase.metadata
 
 
 def run_migrations_offline() -> None:
+    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=settings.sqlalchemy_url,
+        url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},

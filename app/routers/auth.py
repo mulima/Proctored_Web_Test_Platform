@@ -1,4 +1,4 @@
-"""Student registration, email verification and sign-in.
+"""Student registration, email verification and sign-in, within one lecturer's course.
 
 Registration is open ahead of the sitting and the emailed link is the gate: an account
 cannot sit a test until the address it was registered with has been proved. Set
@@ -15,16 +15,16 @@ from sqlalchemy.orm import Session
 
 from app import logging_service
 from app.config import settings
-from app.db import get_db
-from app.deps import templates
+from app.deps import get_course_db, get_lecturer, require_course_ready, templates
 from app.mailer import Message, send
-from app.models import Student
+from app.models_course import Student
+from app.models_platform import Lecturer
 from app.security import (
     hash_password,
-    make_session_cookie,
     make_verification_token,
     password_problems,
     read_verification_token,
+    set_session_cookie,
     tokens_match,
     verify_password,
 )
@@ -49,38 +49,29 @@ def _domain_allowed(email: str) -> bool:
     return any(domain == d or domain.endswith("." + d) for d in allowed)
 
 
-def _set_session(response: RedirectResponse, payload: dict) -> RedirectResponse:
-    response.set_cookie(
-        settings.session_cookie,
-        make_session_cookie(payload),
-        max_age=settings.session_max_age_seconds,
-        httponly=True,
-        samesite="lax",
-        secure=settings.base_url.startswith("https"),
-    )
-    return response
-
-
-def send_verification_email(db: Session, student: Student, request: Request) -> bool:
-    token = make_verification_token(student.email)
+def send_verification_email(
+    db: Session, student: Student, lecturer: Lecturer, request: Request
+) -> bool:
+    token = make_verification_token(student.email, lecturer.slug)
     student.verification_token = token
     student.verification_sent_at = datetime.utcnow()
     db.commit()
 
-    link = f"{settings.base_url.rstrip('/')}/verify?token={token}"
+    link = f"{settings.base_url.rstrip('/')}/{lecturer.slug}/verify?token={token}"
     body = (
         f"Hello {student.full_name},\n\n"
-        f"An account was registered for {settings.subtitle} using this email address.\n\n"
+        f"An account was registered for {lecturer.subtitle} using this email address.\n\n"
         f"Computer number: {student.computer_number}\n\n"
         "Confirm the address by opening this link:\n\n"
         f"{link}\n\n"
         f"The link works once and expires in "
         f"{settings.verification_token_max_age_seconds // 3600} hours.\n\n"
         "If you did not register, ignore this message and the account stays unusable.\n\n"
-        f"{settings.footer}\n"
+        f"{lecturer.footer}\n"
     )
     delivered = send(
-        Message(to=student.email, subject=f"Confirm your {settings.brand} account", body=body)
+        Message(to=student.email, subject=f"Confirm your {lecturer.brand} account", body=body),
+        lecturer,
     )
     logging_service.record(
         db,
@@ -94,7 +85,7 @@ def send_verification_email(db: Session, student: Student, request: Request) -> 
 
 
 @router.get("/register", response_class=HTMLResponse)
-def register_form(request: Request):
+def register_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
     return templates.TemplateResponse(request, "register.html", {"errors": [], "values": {}})
 
 
@@ -106,7 +97,8 @@ def register(
     computer_number: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    db: Session = Depends(get_db),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
     computer_number = _normalise_computer_number(computer_number)
@@ -128,7 +120,7 @@ def register(
         errors.append("Enter your computer number.")
     if password != confirm_password:
         errors.append("The two passwords do not match.")
-    errors.extend(password_problems(password))
+    errors.extend(password_problems(password, course_code=lecturer.course_code))
 
     if not errors:
         existing_email = db.scalar(select(Student).where(func.lower(Student.email) == email))
@@ -141,7 +133,7 @@ def register(
             else:
                 # Re-registering an unverified address just resends the link. Friendlier
                 # than an error, and it cannot be used to discover verified accounts.
-                send_verification_email(db, existing_email, request)
+                send_verification_email(db, existing_email, lecturer, request)
                 return templates.TemplateResponse(
                     request, "register_done.html", {"email": email, "resent": True}
                 )
@@ -180,15 +172,20 @@ def register(
         student_id=student.id,
         request=request,
     )
-    send_verification_email(db, student, request)
+    send_verification_email(db, student, lecturer, request)
     return templates.TemplateResponse(
         request, "register_done.html", {"email": email, "resent": False}
     )
 
 
 @router.get("/verify", response_class=HTMLResponse)
-def verify(request: Request, token: str = "", db: Session = Depends(get_db)):
-    email = read_verification_token(token)
+def verify(
+    request: Request,
+    token: str = "",
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
+    email = read_verification_token(token, lecturer.slug)
     student = (
         db.scalar(select(Student).where(func.lower(Student.email) == email)) if email else None
     )
@@ -236,22 +233,29 @@ def verify(request: Request, token: str = "", db: Session = Depends(get_db)):
 
 
 @router.get("/resend", response_class=HTMLResponse)
-def resend_form(request: Request):
+def resend_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
     return templates.TemplateResponse(request, "resend.html", {"sent": False})
 
 
 @router.post("/resend", response_class=HTMLResponse)
-def resend(request: Request, email: str = Form(...), db: Session = Depends(get_db)):
+def resend(
+    request: Request,
+    email: str = Form(...),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
     email = _normalise_email(email)
     student = db.scalar(select(Student).where(func.lower(Student.email) == email))
     if student and not student.is_verified:
-        send_verification_email(db, student, request)
+        send_verification_email(db, student, lecturer, request)
     # Always the same answer, so this cannot be used to enumerate who has registered.
     return templates.TemplateResponse(request, "resend.html", {"sent": True})
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_form(request: Request, pending: int = 0):
+def login_form(
+    request: Request, pending: int = 0, lecturer: Lecturer = Depends(require_course_ready)
+):
     note = ""
     if pending:
         note = "That account is not ready to sit yet. Confirm your email, or wait for approval."
@@ -263,7 +267,8 @@ def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    db: Session = Depends(get_db),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
     student = db.scalar(select(Student).where(func.lower(Student.email) == email))
@@ -315,12 +320,13 @@ def login(
     db.commit()
     logging_service.record(db, "LOGIN", email, student_id=student.id, request=request)
 
-    response = RedirectResponse("/", status_code=303)
-    return _set_session(response, {"role": "student", "id": student.id})
+    response = RedirectResponse(f"/{lecturer.slug}/", status_code=303)
+    set_session_cookie(response, role="student", slug=lecturer.slug, id=student.id)
+    return response
 
 
 @router.get("/logout")
-def logout(request: Request, db: Session = Depends(get_db)):
-    response = RedirectResponse("/login", status_code=303)
-    response.delete_cookie(settings.session_cookie)
+def logout(request: Request, lecturer: Lecturer = Depends(get_lecturer)):
+    response = RedirectResponse(f"/{lecturer.slug}/login", status_code=303)
+    response.delete_cookie(settings.session_cookie, path=f"/{lecturer.slug}")
     return response

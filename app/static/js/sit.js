@@ -30,7 +30,7 @@
   async function reportIncident(category, detail, snapshot) {
     if (submitted) return;
     try {
-      const response = await fetch("/api/incident", {
+      const response = await fetch(data.coursePrefix + "/api/incident", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ category, detail: detail || "", snapshot: snapshot || null })
@@ -356,7 +356,7 @@
     el("saveChip").textContent = "Saving";
     el("saveChip").className = "chip";
     try {
-      const response = await fetch("/api/save", {
+      const response = await fetch(data.coursePrefix + "/api/save", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -402,13 +402,13 @@
         (status.flag_after ? " of " + status.flag_after + " before review" : "");
       chip.className = "chip " + (status.flagged ? "bad" : status.strike_count ? "" : "ok");
     }
-    if (status.locked && !submitted) finishUp("/submitted");
+    if (status.locked && !submitted) finishUp(data.coursePrefix + "/submitted");
   }
 
   async function pollStatus() {
     if (submitted) return;
     try {
-      const response = await fetch("/api/status");
+      const response = await fetch(data.coursePrefix + "/api/status");
       if (response.ok) applyStatus(await response.json());
     } catch (error) { /* handled by the save path */ }
   }
@@ -456,7 +456,7 @@
     capture();
     await save();
     try {
-      const response = await fetch("/api/submit", {
+      const response = await fetch(data.coursePrefix + "/api/submit", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ auto: !!auto, reason: reason || "" })
@@ -466,7 +466,7 @@
         showAlert("submit", payload.error || "Submission failed.", "warn", 12000);
         return;
       }
-      finishUp(payload.redirect || "/submitted");
+      finishUp(payload.redirect || data.coursePrefix + "/submitted");
     } catch (error) {
       showAlert("submit",
         "Could not reach the server to submit. Check your connection - your answers are saved.",
@@ -546,7 +546,7 @@
   window.addEventListener("beforeunload", (event) => {
     if (!submitted && started && dirty) {
       capture();
-      navigator.sendBeacon("/api/save", new Blob([JSON.stringify({
+      navigator.sendBeacon(data.coursePrefix + "/api/save", new Blob([JSON.stringify({
         current_question: current,
         answers: questions.map((q) => ({
           question_id: q.id, value: q.value || "", selected: !!q.selected

@@ -17,7 +17,7 @@
 <div class="notice">Imported {{ request.query_params.get('imported') }} question(s).</div>{% endif %}
 
 <section class="card">
-  <form method="post" action="/admin/exams/{{ exam.id }}/open">
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/open') }}">
     {% if exam.is_open %}
       <p>Students can sit this paper right now.</p>
       <button class="danger" type="submit">Close the exam</button>
@@ -31,7 +31,7 @@
 
 <section class="card">
   <h2>Settings</h2>
-  <form method="post" action="/admin/exams/{{ exam.id }}/settings">
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/settings') }}">
     <label>Title<input name="title" value="{{ exam.title }}" required></label>
     <label>Duration (minutes)<input type="number" name="duration_minutes" value="{{ exam.duration_minutes }}" min="1"></label>
     <label>Total marks<input type="number" name="total_marks" value="{{ exam.total_marks }}"></label>
@@ -59,7 +59,7 @@
       <td>{{ question.marks }}</td>
       <td>
         {% if not attempt_count %}
-        <form class="inline-form" method="post" action="/admin/questions/{{ question.id }}/delete">
+        <form class="inline-form" method="post" action="{{ course_url('/admin/questions/' ~ question.id ~ '/delete') }}">
           <button type="submit">Delete</button></form>
         {% endif %}
       </td>
@@ -72,7 +72,7 @@
 
 <section class="card">
   <h2>Add a question</h2>
-  <form method="post" action="/admin/exams/{{ exam.id }}/questions">
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/questions') }}">
     <label>Section
       <select name="section">
         <option value="A">A &mdash; multiple choice</option>
@@ -94,7 +94,7 @@
   <p class="muted">Paste a <code>quiz_data.json</code> in the same shape the desktop app used:
   <code>multiple_choice</code>, <code>short_answer</code>, <code>long_writeup</code>.
   Questions are appended, not replaced.</p>
-  <form method="post" action="/admin/exams/{{ exam.id }}/import">
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/import') }}">
     <textarea name="payload" style="min-height:160px" placeholder='{"multiple_choice": [...], "short_answer": [...], "long_writeup": [...]}'></textarea>
     <button class="primary" type="submit">Import</button>
   </form>

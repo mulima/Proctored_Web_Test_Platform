@@ -8,6 +8,12 @@ Three backends, chosen by MAIL_BACKEND:
   resend   the Resend HTTP API, which needs no SMTP egress - useful because some
            hosts block outbound port 587.
 
+Every course can set its own of these at /{slug}/admin/setup - see resolve() below.
+A lecturer who leaves theirs unset falls back to the platform's own MAIL_BACKEND/
+SMTP_*/RESEND_API_KEY (app/config.py), which the platform operator controls. That
+mirrors the platform's own original default: it runs with nothing configured, on
+console, same as a course now does if the lecturer never touches this page.
+
 Sending never raises into a request handler. An exam must not fail to submit because
 an inbox is full, so failures are logged and reported to the caller as False.
 """
@@ -21,6 +27,7 @@ from dataclasses import dataclass, field
 from email.message import EmailMessage
 
 from app.config import settings
+from app.tenant_crypto import decrypt
 
 
 @dataclass
@@ -51,28 +58,77 @@ class MailError(Exception):
     pass
 
 
-def send(message: Message) -> bool:
-    backend = (settings.mail_backend or "console").lower()
+@dataclass
+class MailConfig:
+    backend: str
+    mail_from: str
+    smtp_host: str
+    smtp_port: int
+    smtp_username: str
+    smtp_password: str
+    smtp_use_tls: bool
+    resend_api_key: str
+
+
+def resolve(lecturer=None) -> MailConfig:
+    """A course's own email config, falling back field-by-field to the platform's.
+
+    `lecturer` is an app.models_platform.Lecturer, or None for platform-level mail
+    (there isn't much of that - mostly this is called with a real lecturer). Secrets
+    are decrypted here, in-memory, right before use - never stored or logged in the
+    clear anywhere else.
+    """
+    if lecturer is None:
+        return MailConfig(
+            backend=(settings.mail_backend or "console").lower(),
+            mail_from=settings.mail_from,
+            smtp_host=settings.smtp_host,
+            smtp_port=settings.smtp_port,
+            smtp_username=settings.smtp_username,
+            smtp_password=settings.smtp_password,
+            smtp_use_tls=settings.smtp_use_tls,
+            resend_api_key=settings.resend_api_key,
+        )
+    smtp_password = ""
+    if lecturer.smtp_password_encrypted:
+        smtp_password = decrypt(lecturer.smtp_password_encrypted)
+    resend_api_key = ""
+    if lecturer.resend_api_key_encrypted:
+        resend_api_key = decrypt(lecturer.resend_api_key_encrypted)
+    return MailConfig(
+        backend=(lecturer.mail_backend or settings.mail_backend or "console").lower(),
+        mail_from=lecturer.mail_from or settings.mail_from,
+        smtp_host=lecturer.smtp_host or settings.smtp_host,
+        smtp_port=lecturer.smtp_port or settings.smtp_port,
+        smtp_username=lecturer.smtp_username or settings.smtp_username,
+        smtp_password=smtp_password or settings.smtp_password,
+        smtp_use_tls=lecturer.smtp_use_tls if lecturer.smtp_host else settings.smtp_use_tls,
+        resend_api_key=resend_api_key or settings.resend_api_key,
+    )
+
+
+def send(message: Message, lecturer=None) -> bool:
     try:
-        if backend == "smtp":
-            _send_smtp(message)
-        elif backend == "resend":
-            _send_resend(message)
+        config = resolve(lecturer)
+        if config.backend == "smtp":
+            _send_smtp(message, config)
+        elif config.backend == "resend":
+            _send_resend(message, config)
         else:
-            _send_console(message)
+            _send_console(message, config)
         return True
     except Exception as exc:  # never let mail failure break a request
         print(f"[mailer] FAILED to send to {message.to}: {type(exc).__name__}: {exc}", flush=True)
         return False
 
 
-def _send_console(message: Message) -> None:
+def _send_console(message: Message, config: MailConfig) -> None:
     attached = ", ".join(a.filename for a in message.attachments) or "none"
     print(
         "\n"
         "==================== EMAIL (console backend) ====================\n"
         f"To:          {message.to}\n"
-        f"From:        {settings.mail_from}\n"
+        f"From:        {config.mail_from}\n"
         f"Subject:     {message.subject}\n"
         f"Attachments: {attached}\n"
         "-----------------------------------------------------------------\n"
@@ -82,9 +138,9 @@ def _send_console(message: Message) -> None:
     )
 
 
-def _build_mime(message: Message) -> EmailMessage:
+def _build_mime(message: Message, config: MailConfig) -> EmailMessage:
     mime = EmailMessage()
-    mime["From"] = settings.mail_from
+    mime["From"] = config.mail_from
     mime["To"] = message.to
     mime["Subject"] = message.subject
     mime.set_content(message.body)
@@ -100,34 +156,34 @@ def _build_mime(message: Message) -> EmailMessage:
     return mime
 
 
-def _send_smtp(message: Message) -> None:
-    if not settings.smtp_host:
-        raise MailError("MAIL_BACKEND=smtp but SMTP_HOST is not set.")
-    mime = _build_mime(message)
+def _send_smtp(message: Message, config: MailConfig) -> None:
+    if not config.smtp_host:
+        raise MailError("MAIL_BACKEND=smtp but no SMTP_HOST is configured (platform or course).")
+    mime = _build_mime(message, config)
     context = ssl.create_default_context()
-    if settings.smtp_port == 465:
-        with smtplib.SMTP_SSL(settings.smtp_host, settings.smtp_port, context=context, timeout=20) as server:
-            if settings.smtp_username:
-                server.login(settings.smtp_username, settings.smtp_password)
+    if config.smtp_port == 465:
+        with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, context=context, timeout=20) as server:
+            if config.smtp_username:
+                server.login(config.smtp_username, config.smtp_password)
             server.send_message(mime)
         return
-    with smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=20) as server:
+    with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=20) as server:
         server.ehlo()
-        if settings.smtp_use_tls:
+        if config.smtp_use_tls:
             server.starttls(context=context)
             server.ehlo()
-        if settings.smtp_username:
-            server.login(settings.smtp_username, settings.smtp_password)
+        if config.smtp_username:
+            server.login(config.smtp_username, config.smtp_password)
         server.send_message(mime)
 
 
-def _send_resend(message: Message) -> None:
+def _send_resend(message: Message, config: MailConfig) -> None:
     import base64
 
-    if not settings.resend_api_key:
-        raise MailError("MAIL_BACKEND=resend but RESEND_API_KEY is not set.")
+    if not config.resend_api_key:
+        raise MailError("MAIL_BACKEND=resend but no RESEND_API_KEY is configured (platform or course).")
     payload = {
-        "from": settings.mail_from,
+        "from": config.mail_from,
         "to": [message.to],
         "subject": message.subject,
         "text": message.body,
@@ -146,7 +202,7 @@ def _send_resend(message: Message) -> None:
         "https://api.resend.com/emails",
         data=json.dumps(payload).encode("utf-8"),
         headers={
-            "Authorization": f"Bearer {settings.resend_api_key}",
+            "Authorization": f"Bearer {config.resend_api_key}",
             "Content-Type": "application/json",
         },
         method="POST",

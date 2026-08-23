@@ -1,0 +1,82 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>Course setup</h1>
+
+{% if request.query_params.get('saved') %}
+<div class="notice">Saved.</div>
+{% endif %}
+{% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+
+{% if not lecturer.database_ready %}
+<div class="warnbox"><strong>This course is not usable yet.</strong>
+  <p class="muted">Nothing else here - registration, sign-in, sitting, the roster - works
+  until a database is connected below and validated against the schema at
+  <a href="/docs/DATABASE_SCHEMA.md">/docs/DATABASE_SCHEMA.md</a>. This app never creates
+  tables for you, only checks that they already exist.</p></div>
+{% endif %}
+
+<section class="card">
+  <h2>Database connection</h2>
+  <p class="muted">{% if has_database %}A database is connected. Paste a new connection
+  string below only if you want to switch to a different one.{% else %}Paste the
+  connection string for a database you have already provisioned with the schema at
+  <a href="/docs/DATABASE_SCHEMA.md">/docs/DATABASE_SCHEMA.md</a> - either by running the
+  SQL there directly, or by running the equivalent Alembic migration in
+  <code>alembic_course/</code> against it yourself.{% endif %}</p>
+  <form method="post" action="{{ course_url('/admin/setup/database') }}">
+    <label>Database connection string
+      <input type="text" name="database_url" autocomplete="off"
+        placeholder="postgresql://user:password@host:5432/dbname">
+      <span class="hint">Stored encrypted. Never shown back to you once saved - if you need
+      to change it, paste the new one here.</span></label>
+    <button class="primary" type="submit">Connect and validate</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Course branding</h2>
+  <p class="muted">Shown on every page, email and submission PDF for this course.</p>
+  <form method="post" action="{{ course_url('/admin/setup/branding') }}">
+    <label>Course code<input name="course_code" value="{{ lecturer.course_code }}" placeholder="MBS6011"></label>
+    <label>Course title<input name="course_title" value="{{ lecturer.course_title }}" placeholder="MBS6011: E-Business Strategies and Models"></label>
+    <label>Institution<input name="institution" value="{{ lecturer.institution }}" placeholder="University of Zambia"></label>
+    <button class="primary" type="submit">Save branding</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Email delivery</h2>
+  <p class="muted">Optional. Anything left blank falls back to this platform's own default
+  (currently: whatever the platform operator configured, or a console-only log if they
+  configured nothing). Set these only if you want verification links and alert emails for
+  <em>your</em> course to send from your own account or a different provider.</p>
+  <form method="post" action="{{ course_url('/admin/setup/email') }}">
+    <label>Backend
+      <select name="mail_backend">
+        <option value="" {% if not lecturer.mail_backend %}selected{% endif %}>Use the platform's default</option>
+        <option value="console" {% if lecturer.mail_backend == 'console' %}selected{% endif %}>Console (log only, no real delivery)</option>
+        <option value="smtp" {% if lecturer.mail_backend == 'smtp' %}selected{% endif %}>SMTP</option>
+        <option value="resend" {% if lecturer.mail_backend == 'resend' %}selected{% endif %}>Resend</option>
+      </select></label>
+    <label>From address<input name="mail_from" value="{{ lecturer.mail_from }}" placeholder="MBS6011 <no-reply@yourdomain.example>"></label>
+
+    <h3>SMTP</h3>
+    <label>Host<input name="smtp_host" value="{{ lecturer.smtp_host }}" placeholder="smtp.gmail.com"></label>
+    <label>Port<input type="number" name="smtp_port" value="{{ lecturer.smtp_port or '' }}" placeholder="587"></label>
+    <label>Username<input name="smtp_username" value="{{ lecturer.smtp_username }}"></label>
+    <label>Password
+      <input type="password" name="smtp_password" autocomplete="off"
+        placeholder="{% if has_smtp_password %}(unchanged - leave blank to keep it){% else %}a Gmail app password, not your login password{% endif %}">
+      <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
+    <label><input type="checkbox" name="smtp_use_tls" value="1" {% if lecturer.smtp_use_tls %}checked{% endif %}> Use STARTTLS</label>
+
+    <h3>Resend</h3>
+    <label>API key
+      <input type="password" name="resend_api_key" autocomplete="off"
+        placeholder="{% if has_resend_key %}(unchanged - leave blank to keep it){% else %}re_...{% endif %}">
+      <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
+
+    <button class="primary" type="submit">Save email settings</button>
+  </form>
+</section>
+{% endblock %}

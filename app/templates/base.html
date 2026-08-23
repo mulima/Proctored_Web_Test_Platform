@@ -3,22 +3,24 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}{{ settings.brand }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/app.css">
+  <title>{% block title %}{{ course().brand }}{% endblock %}</title>
+  <link rel="stylesheet" href="/static/css/app.css?v=20260823c">
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block chrome %}
   <header class="site">
     <div class="wrap">
-      <a class="brand" href="/">{{ settings.brand }}</a>
-      <span class="brand-sub">{{ settings.subtitle }}</span>
+      <div class="brand-lockup">
+        <a class="brand" href="{{ course_url('/') }}">{{ course().brand }}</a>
+        <span class="brand-sub">{{ course().subtitle }}</span>
+      </div>
       <nav>{% block nav %}{% endblock %}</nav>
     </div>
   </header>
   {% endblock %}
   <main class="wrap">{% block content %}{% endblock %}</main>
   <footer class="site"><div class="wrap">
-    {{ settings.footer }} &middot; <a href="/privacy">What this system records</a>
+    {{ course().footer }} &middot; <a href="/privacy">What this system records</a>
   </div></footer>
   {% block scripts %}{% endblock %}
 </body>

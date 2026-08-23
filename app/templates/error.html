@@ -1,4 +1,4 @@
 {% extends "base.html" %}
 {% block content %}<section class="card"><h1>Something went wrong</h1>
 <p class="muted">Error {{ status_code }}</p><p>{{ detail }}</p>
-<p><a href="/">Back to the start</a></p></section>{% endblock %}
+<p><a href="{{ course_url('/') }}">Back to the start</a></p></section>{% endblock %}

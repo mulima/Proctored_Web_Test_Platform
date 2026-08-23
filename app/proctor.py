@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models import Attempt, Incident
+from app.models_course import Attempt, Incident
 
 # Categories that count towards the strike total. Blocked keystrokes and right-clicks
 # are recorded for the record but do not escalate: they are noise, not evidence.

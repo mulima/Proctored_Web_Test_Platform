@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}{% if ok %}Email confirmed{% else %}Link not valid{% endif %} &middot; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>{% if ok %}Email confirmed{% else %}Link not valid{% endif %}</h1>
+  <p>{{ message }}</p>
+  {% if ok %}<p><a class="button primary" href="/{{ slug }}/admin/login">Sign in</a></p>
+  {% else %}<p><a class="button" href="/resend-lecturer">Request a new link</a></p>{% endif %}
+</section>
+{% endblock %}
