@@ -48,7 +48,12 @@ class Lecturer(Base):
 
     # Encrypted with CREDENTIAL_ENCRYPTION_KEY (app/tenant_crypto.py), never stored
     # or logged in the clear. Nullable until the lecturer completes setup.
+    # course_storage_mode chooses where this course's own data lives:
+    # external = lecturer-managed database connection string (default)
+    # platform = schema created in this deployment's platform DATABASE_URL
+    course_storage_mode: Mapped[str] = mapped_column(String(20), default="external")
     database_url_encrypted: Mapped[str | None] = mapped_column(Text, nullable=True)
+    platform_db_schema: Mapped[str | None] = mapped_column(String(100), nullable=True)
     database_ready: Mapped[bool] = mapped_column(Boolean, default=False)
 
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

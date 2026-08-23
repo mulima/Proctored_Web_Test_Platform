@@ -89,12 +89,25 @@ def resolve(lecturer=None) -> MailConfig:
             smtp_use_tls=settings.smtp_use_tls,
             resend_api_key=settings.resend_api_key,
         )
+
+    # A course can opt into its own SMTP settings. If it has no SMTP identity fields
+    # set and is using the platform default backend, prefer the platform secret values
+    # so stale encrypted course secrets do not shadow fresh platform credentials.
+    course_uses_own_smtp = bool(
+        lecturer.mail_backend == "smtp"
+        or lecturer.smtp_host
+        or lecturer.smtp_username
+        or lecturer.smtp_port
+    )
+
     smtp_password = ""
-    if lecturer.smtp_password_encrypted:
+    if course_uses_own_smtp and lecturer.smtp_password_encrypted:
         smtp_password = decrypt(lecturer.smtp_password_encrypted)
+
     resend_api_key = ""
-    if lecturer.resend_api_key_encrypted:
+    if lecturer.mail_backend == "resend" and lecturer.resend_api_key_encrypted:
         resend_api_key = decrypt(lecturer.resend_api_key_encrypted)
+
     return MailConfig(
         backend=(lecturer.mail_backend or settings.mail_backend or "console").lower(),
         mail_from=lecturer.mail_from or settings.mail_from,
@@ -102,7 +115,7 @@ def resolve(lecturer=None) -> MailConfig:
         smtp_port=lecturer.smtp_port or settings.smtp_port,
         smtp_username=lecturer.smtp_username or settings.smtp_username,
         smtp_password=smtp_password or settings.smtp_password,
-        smtp_use_tls=lecturer.smtp_use_tls if lecturer.smtp_host else settings.smtp_use_tls,
+        smtp_use_tls=(lecturer.smtp_use_tls if course_uses_own_smtp else settings.smtp_use_tls),
         resend_api_key=resend_api_key or settings.resend_api_key,
     )
 
@@ -118,7 +131,16 @@ def send(message: Message, lecturer=None) -> bool:
             _send_console(message, config)
         return True
     except Exception as exc:  # never let mail failure break a request
-        print(f"[mailer] FAILED to send to {message.to}: {type(exc).__name__}: {exc}", flush=True)
+        config = resolve(lecturer)
+        print(
+            "[mailer] FAILED to send "
+            f"to {message.to}: {type(exc).__name__}: {exc} "
+            f"(backend={config.backend}, host={config.smtp_host or '-'}, "
+            f"port={config.smtp_port}, tls={config.smtp_use_tls}, "
+            f"username_set={'yes' if bool(config.smtp_username) else 'no'}, "
+            f"password_set={'yes' if bool(config.smtp_password) else 'no'})",
+            flush=True,
+        )
         return False
 
 
@@ -159,12 +181,23 @@ def _build_mime(message: Message, config: MailConfig) -> EmailMessage:
 def _send_smtp(message: Message, config: MailConfig) -> None:
     if not config.smtp_host:
         raise MailError("MAIL_BACKEND=smtp but no SMTP_HOST is configured (platform or course).")
+    if not config.smtp_username:
+        raise MailError(
+            "MAIL_BACKEND=smtp but no SMTP_USERNAME is configured in the effective "
+            "settings (course override can shadow platform defaults)."
+        )
+    if not config.smtp_password:
+        raise MailError(
+            "MAIL_BACKEND=smtp but no SMTP_PASSWORD is configured in the effective "
+            "settings (course override can shadow platform defaults)."
+        )
+    if config.smtp_port == 587 and not config.smtp_use_tls:
+        raise MailError("SMTP port 587 requires STARTTLS (enable Use STARTTLS).")
     mime = _build_mime(message, config)
     context = ssl.create_default_context()
     if config.smtp_port == 465:
         with smtplib.SMTP_SSL(config.smtp_host, config.smtp_port, context=context, timeout=20) as server:
-            if config.smtp_username:
-                server.login(config.smtp_username, config.smtp_password)
+            server.login(config.smtp_username, config.smtp_password)
             server.send_message(mime)
         return
     with smtplib.SMTP(config.smtp_host, config.smtp_port, timeout=20) as server:
@@ -172,8 +205,7 @@ def _send_smtp(message: Message, config: MailConfig) -> None:
         if config.smtp_use_tls:
             server.starttls(context=context)
             server.ehlo()
-        if config.smtp_username:
-            server.login(config.smtp_username, config.smtp_password)
+        server.login(config.smtp_username, config.smtp_password)
         server.send_message(mime)
 
 

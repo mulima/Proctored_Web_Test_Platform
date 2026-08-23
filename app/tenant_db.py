@@ -9,12 +9,13 @@ enough for connection-pool pressure across many databases to matter.
 """
 
 from collections.abc import Iterator
+import re
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.config import normalise_database_url
+from app.config import normalise_database_url, settings
 from app.models_course import CourseBase
 from app.models_platform import Lecturer
 from app.tenant_crypto import decrypt
@@ -27,14 +28,17 @@ def _is_postgres(url: str) -> bool:
     return url.startswith("postgresql")
 
 
-def _engine_kwargs(url: str) -> dict:
+def _engine_kwargs(url: str, schema: str | None = None) -> dict:
     if _is_postgres(url):
-        return {
+        kwargs = {
             "pool_pre_ping": True,
             "pool_size": 3,
             "max_overflow": 5,
             "pool_recycle": 900,
         }
+        if schema:
+            kwargs["connect_args"] = {"options": f"-csearch_path={schema}"}
+        return kwargs
     return {"connect_args": {"check_same_thread": False}}
 
 
@@ -45,17 +49,61 @@ def engine_for_url(raw_url: str) -> Engine:
     return create_engine(url, future=True, **_engine_kwargs(url))
 
 
+def default_platform_schema_name(lecturer: Lecturer) -> str:
+    slug = re.sub(r"[^a-z0-9]+", "_", (lecturer.slug or "course").lower()).strip("_")
+    slug = slug[:40] or "course"
+    return f"course_{lecturer.id}_{slug}"
+
+
+def provision_platform_schema(schema: str) -> None:
+    """Creates a per-course schema inside the platform database and ensures all
+    course tables exist there.
+    """
+    if not settings.is_postgres:
+        raise RuntimeError("Platform-managed course storage requires PostgreSQL.")
+    if not re.match(r"^[a-z_][a-z0-9_]{0,62}$", schema or ""):
+        raise RuntimeError("Invalid schema name for platform-managed storage.")
+
+    base_url = settings.sqlalchemy_url
+    admin_engine = create_engine(base_url, future=True, **_engine_kwargs(base_url))
+    try:
+        with admin_engine.begin() as conn:
+            conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{schema}"'))
+    finally:
+        admin_engine.dispose()
+
+    schema_engine = create_engine(
+        base_url, future=True, **_engine_kwargs(base_url, schema=schema)
+    )
+    try:
+        CourseBase.metadata.create_all(bind=schema_engine)
+    finally:
+        schema_engine.dispose()
+
+
 def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
     cached = _sessionmakers.get(lecturer.id)
     if cached is not None:
         return cached
-    if not lecturer.database_url_encrypted:
-        raise RuntimeError(
-            f"Lecturer {lecturer.slug!r} has no database configured yet."
+    if lecturer.course_storage_mode == "platform":
+        if not lecturer.platform_db_schema:
+            raise RuntimeError(
+                f"Lecturer {lecturer.slug!r} is set to platform storage but has no schema."
+            )
+        url = settings.sqlalchemy_url
+        engine = create_engine(
+            url,
+            future=True,
+            **_engine_kwargs(url, schema=lecturer.platform_db_schema),
         )
-    raw_url = decrypt(lecturer.database_url_encrypted)
-    url = normalise_database_url(raw_url)
-    engine = create_engine(url, future=True, **_engine_kwargs(url))
+    else:
+        if not lecturer.database_url_encrypted:
+            raise RuntimeError(
+                f"Lecturer {lecturer.slug!r} has no database configured yet."
+            )
+        raw_url = decrypt(lecturer.database_url_encrypted)
+        url = normalise_database_url(raw_url)
+        engine = create_engine(url, future=True, **_engine_kwargs(url))
     factory = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False, future=True)
     _engines[lecturer.id] = engine
     _sessionmakers[lecturer.id] = factory
@@ -86,7 +134,7 @@ def forget(lecturer_id: int) -> None:
         engine.dispose()
 
 
-def validate_schema(engine: Engine) -> list[str]:
+def validate_schema(engine: Engine, schema: str | None = None) -> list[str]:
     """Returns the list of expected course tables missing from this database.
     Empty means the connection matches docs/DATABASE_SCHEMA.md well enough to
     use - this never creates or alters anything, only inspects.
@@ -94,6 +142,6 @@ def validate_schema(engine: Engine) -> list[str]:
     from sqlalchemy import inspect
 
     inspector = inspect(engine)
-    existing = set(inspector.get_table_names())
+    existing = set(inspector.get_table_names(schema=schema))
     expected = set(CourseBase.metadata.tables.keys())
     return sorted(expected - existing)

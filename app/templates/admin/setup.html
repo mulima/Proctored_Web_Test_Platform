@@ -17,18 +17,23 @@
 
 <section class="card">
   <h2>Database connection</h2>
-  <p class="muted">{% if has_database %}A database is connected. Paste a new connection
-  string below only if you want to switch to a different one.{% else %}Paste the
-  connection string for a database you have already provisioned with the schema at
-  <a href="/docs/DATABASE_SCHEMA.md">/docs/DATABASE_SCHEMA.md</a> - either by running the
-  SQL there directly, or by running the equivalent Alembic migration in
-  <code>alembic_course/</code> against it yourself.{% endif %}</p>
+  <p class="muted">Choose where this course's data should live. You can use your own
+  external database, or let the platform create and manage a dedicated schema for this
+  course inside the platform database.</p>
   <form method="post" action="{{ course_url('/admin/setup/database') }}">
+    <label>Storage mode
+      <select name="storage_mode">
+        <option value="external" {% if storage_mode == 'external' %}selected{% endif %}>Use my own database</option>
+        <option value="platform" {% if storage_mode == 'platform' %}selected{% endif %}>Use platform-managed database</option>
+      </select>
+      <span class="hint">Platform-managed mode provisions an isolated schema for this
+      course automatically.</span>
+    </label>
     <label>Database connection string
       <input type="text" name="database_url" autocomplete="off"
         placeholder="postgresql://user:password@host:5432/dbname">
-      <span class="hint">Stored encrypted. Never shown back to you once saved - if you need
-      to change it, paste the new one here.</span></label>
+      <span class="hint">Required only for "Use my own database". Stored encrypted and
+      never shown back once saved.</span></label>
     <button class="primary" type="submit">Connect and validate</button>
   </form>
 </section>

@@ -24,7 +24,13 @@ from app.models_course import AppLog, Attempt, Exam, Question, Snapshot, Student
 from app.models_platform import Lecturer
 from app.security import set_session_cookie, verify_password
 from app.tenant_crypto import CredentialEncryptionError, encrypt
-from app.tenant_db import engine_for_url, forget, validate_schema
+from app.tenant_db import (
+    default_platform_schema_name,
+    engine_for_url,
+    forget,
+    provision_platform_schema,
+    validate_schema,
+)
 
 router = APIRouter(prefix="/admin")
 
@@ -94,10 +100,12 @@ def setup_form(
 
 
 def _setup_context(lecturer: Lecturer, errors: list[str]) -> dict:
+    storage_mode = lecturer.course_storage_mode or "external"
     return {
         "errors": errors,
         "lecturer": lecturer,
-        "has_database": bool(lecturer.database_url_encrypted),
+        "has_database": bool(lecturer.database_url_encrypted) or bool(lecturer.platform_db_schema),
+        "storage_mode": storage_mode,
         "has_smtp_password": bool(lecturer.smtp_password_encrypted),
         "has_resend_key": bool(lecturer.resend_api_key_encrypted),
     }
@@ -106,11 +114,42 @@ def _setup_context(lecturer: Lecturer, errors: list[str]) -> dict:
 @router.post("/setup/database", response_class=HTMLResponse)
 def setup_database(
     request: Request,
+    storage_mode: str = Form("external"),
     database_url: str = Form(""),
     lecturer: Lecturer = Depends(require_admin),
     platform_db: Session = Depends(get_db),
 ):
     errors: list[str] = []
+    storage_mode = (storage_mode or "external").strip().lower()
+    if storage_mode not in {"external", "platform"}:
+        storage_mode = "external"
+
+    if storage_mode == "platform":
+        try:
+            schema = lecturer.platform_db_schema or default_platform_schema_name(lecturer)
+            provision_platform_schema(schema)
+        except Exception as exc:
+            errors.append(
+                "Could not provision course tables in the platform database: "
+                f"{type(exc).__name__}: {str(exc)[:300]}"
+            )
+        else:
+            lecturer.course_storage_mode = "platform"
+            lecturer.platform_db_schema = schema
+            lecturer.database_url_encrypted = None
+            lecturer.database_ready = True
+            forget(lecturer.id)
+            logging_service.record_platform(
+                platform_db,
+                "LECTURER_DATABASE_CONNECTED_PLATFORM",
+                f"{lecturer.slug} -> schema {schema}",
+                lecturer_id=lecturer.id,
+                request=request,
+            )
+            platform_db.commit()
+            destination = f"/{lecturer.slug}/admin" if lecturer.database_ready else f"/{lecturer.slug}/admin/setup?saved=1"
+            return RedirectResponse(destination, status_code=303)
+
     database_url = database_url.strip()
     if not database_url:
         errors.append("Paste a database connection string.")
@@ -144,6 +183,8 @@ def setup_database(
                         "CREDENTIAL_ENCRYPTION_KEY."
                     )
                 else:
+                    lecturer.course_storage_mode = "external"
+                    lecturer.platform_db_schema = None
                     lecturer.database_url_encrypted = encrypted
                     lecturer.database_ready = True
                     forget(lecturer.id)  # drop any previously cached engine for this lecturer
