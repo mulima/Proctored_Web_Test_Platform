@@ -94,6 +94,7 @@
   <p class="muted">Paste a <code>quiz_data.json</code> in the same shape the desktop app used:
   <code>multiple_choice</code>, <code>short_answer</code>, <code>long_writeup</code>.
   Questions are appended, not replaced.</p>
+  <p class="muted"><a href="{{ course_url('/admin/json-guide') }}">Open the JSON preparation guide</a></p>
   <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/import') }}">
     <textarea name="payload" style="min-height:160px" placeholder='{"multiple_choice": [...], "short_answer": [...], "long_writeup": [...]}'></textarea>
     <button class="primary" type="submit">Import</button>

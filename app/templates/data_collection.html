@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Data Collection Policy</h1>
+  <p>This page describes what data is collected when using ClearGrade and why, in a GDPR-aligned
+  format focused on necessity and proportionality.</p>
+
+  <h2>Legal context</h2>
+  <p>This collection model is designed to support obligations under the Zambia Data Protection Act,
+  2021, GDPR where applicable, and relevant US education/privacy obligations for institutions that
+  operate in the United States.</p>
+
+  <h2>Student account data</h2>
+  <ul>
+    <li>Full name, email address, and computer number.</li>
+    <li>Password hash (never plain-text password).</li>
+    <li>Verification and approval status.</li>
+  </ul>
+
+  <h2>Assessment data</h2>
+  <ul>
+    <li>Exam attempts, start and submit times, deadlines, and lock status.</li>
+    <li>Submitted answers and selected Section C questions.</li>
+    <li>Generated submission PDF and marking-relevant metadata.</li>
+  </ul>
+
+  <h2>Proctoring and integrity data</h2>
+  <ul>
+    <li>Incident logs: fullscreen exits, hidden window events, reconnects, and similar events.</li>
+    <li>A still snapshot only when an incident requires evidence.</li>
+    <li>Server-side verification verdict for captured snapshots where configured.</li>
+  </ul>
+
+  <h2>Operational and security logs</h2>
+  <ul>
+    <li>Authentication events, route-level actions, and system event types.</li>
+    <li>IP address and user agent for audit and abuse prevention.</li>
+  </ul>
+
+  <h2>Cookies and session identifiers</h2>
+  <ul>
+    <li>Essential session cookie to maintain authenticated state.</li>
+    <li>Course-scoped cookie path to prevent cross-course session reuse.</li>
+    <li>Security flags such as HTTP-only and same-site are applied by default.</li>
+  </ul>
+  <p>No third-party advertising cookies are used by default in the core platform.</p>
+
+  <h2>What is not continuously collected</h2>
+  <p>Continuous webcam video is not streamed to the server. Frames used for browser-side checks are
+  processed locally and discarded unless an incident snapshot is explicitly captured.</p>
+
+  <h2>Purpose limitation</h2>
+  <p>Collected data is used for account administration, exam delivery, academic integrity review,
+  and operational support. It is not intended for unrelated profiling or marketing use.</p>
+
+  <h2>Contact for data-collection questions</h2>
+  <p>Questions about collection scope, categories, or legal basis should be directed to your
+  lecturer or institution contact:</p>
+  <ul>
+    <li>Email: <strong>privacy@yourinstitution.example</strong></li>
+    <li>Office: <strong>Data Protection Officer / Registrar</strong></li>
+  </ul>
+
+  <p class="fine">Last updated: 23 August 2026</p>
+
+  <p class="muted">Institutions should adapt this policy to local legal requirements and publish the
+  final approved wording to students before exam sessions.</p>
+</section>
+{% endblock %}

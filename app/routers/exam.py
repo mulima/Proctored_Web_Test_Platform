@@ -284,7 +284,19 @@ def submit(
     attempt.submission_mode = "automatic" if auto else "manual"
     attempt.auto_submit_reason = reason[:1000]
     db.commit()
-    db.refresh(attempt)
+    
+    # SECURITY FIX: Refresh attempt with explicit eager-loading to prevent lazy-loading issues
+    # This ensures student details are loaded from the correct session context
+    from sqlalchemy.orm import joinedload
+    db.expire(attempt)  # Clear potentially stale data
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt.id)
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam).joinedload(Exam.questions)
+        )
+    )
 
     document = pdf.build(attempt, _answers_map(db, attempt), lecturer)
     attempt.pdf_bytes = document
@@ -311,10 +323,13 @@ def submitted(
     lecturer: Lecturer = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
+    # SECURITY FIX: Order by submitted_at DESC (most recent) instead of ID DESC
+    # This ensures we show the MOST RECENT submission, not just the highest ID
+    # Prevents showing wrong exam's submission if student has multiple submitted attempts
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.student_id == student.id, Attempt.is_locked.is_(True))
-        .order_by(Attempt.id.desc())
+        .order_by(Attempt.submitted_at.desc())
     )
     return templates.TemplateResponse(
         request, "submitted.html", {"student": student, "attempt": attempt}
@@ -327,10 +342,13 @@ def my_submission(
     lecturer: Lecturer = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
+    # SECURITY FIX: Order by submitted_at DESC (most recent) instead of ID DESC
+    # This ensures we serve the MOST RECENT submission, not just the highest ID
+    # Prevents serving wrong exam's PDF if student has multiple submitted attempts
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.student_id == student.id, Attempt.is_locked.is_(True))
-        .order_by(Attempt.id.desc())
+        .order_by(Attempt.submitted_at.desc())
     )
     if attempt is None or not attempt.pdf_bytes:
         return JSONResponse({"error": "No submission found."}, status_code=404)

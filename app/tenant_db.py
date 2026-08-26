@@ -11,7 +11,7 @@ enough for connection-pool pressure across many databases to matter.
 from collections.abc import Iterator
 import re
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -96,6 +96,14 @@ def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
             future=True,
             **_engine_kwargs(url, schema=lecturer.platform_db_schema),
         )
+        # SECURITY FIX: Explicitly set search_path on every connection to prevent schema isolation failures
+        # This ensures PostgreSQL connection pool doesn't reuse connections with wrong schema context
+        schema_name = lecturer.platform_db_schema
+        @event.listens_for(engine, "connect")
+        def set_search_path(dbapi_conn, connection_record):
+            cursor = dbapi_conn.cursor()
+            cursor.execute(f"SET search_path TO \"{schema_name}\",public")
+            cursor.close()
     else:
         if not lecturer.database_url_encrypted:
             raise RuntimeError(

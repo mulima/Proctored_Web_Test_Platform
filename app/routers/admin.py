@@ -305,6 +305,14 @@ def home(
 # ------------------------------------------------------------------ exams and questions
 
 
+@router.get("/json-guide", response_class=HTMLResponse)
+def json_guide(
+    request: Request,
+    lecturer: Lecturer = Depends(require_admin_ready),
+):
+    return templates.TemplateResponse(request, "admin/json_guide.html", {})
+
+
 @router.post("/exams")
 def create_exam(
     request: Request,
@@ -663,7 +671,16 @@ def attempt_detail(
     lecturer: Lecturer = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = db.get(Attempt, attempt_id)
+    from sqlalchemy.orm import joinedload
+    
+    # Fetch attempt with explicit eager-loading to prevent lazy-loading issues
+    # This ensures we load student and exam in the correct session context
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt_id)
+        .options(joinedload(Attempt.student), joinedload(Attempt.exam))
+    )
+    
     if attempt is None:
         return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
     answers = {answer.question_id: answer for answer in attempt.answers}
@@ -686,7 +703,8 @@ def attempt_pdf(
     lecturer: Lecturer = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = db.get(Attempt, attempt_id)
+    # SECURITY FIX: Use select query instead of db.get() for consistency
+    attempt = db.scalar(select(Attempt).where(Attempt.id == attempt_id))
     if attempt is None or not attempt.pdf_bytes:
         return JSONResponse({"error": "No PDF stored for this attempt."}, status_code=404)
     return Response(
@@ -702,7 +720,8 @@ def snapshot_image(
     lecturer: Lecturer = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    snapshot = db.get(Snapshot, snapshot_id)
+    # SECURITY FIX: Use select query instead of db.get() for consistency
+    snapshot = db.scalar(select(Snapshot).where(Snapshot.id == snapshot_id))
     if snapshot is None:
         return JSONResponse({"error": "Not found."}, status_code=404)
     return Response(content=snapshot.image, media_type=snapshot.mime)

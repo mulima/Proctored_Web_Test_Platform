@@ -1,0 +1,52 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="card">
+  <h1>Data Retention Policy</h1>
+  <p>This page describes how long ClearGrade data is retained and the principle used to set
+  retention periods, aligned with GDPR storage-limitation requirements.</p>
+
+  <h2>Legal context</h2>
+  <p>Retention schedules should be interpreted in line with the Zambia Data Protection Act, 2021,
+  GDPR where applicable, and relevant institutional obligations in the United States.
+  Where rules conflict, the stricter or specifically applicable rule should be followed.</p>
+
+  <h2>Retention principle</h2>
+  <p>Data is kept only as long as necessary for assessment operations, academic integrity review,
+  and legal or institutional obligations. When no longer required, it should be deleted or
+  anonymised according to institution policy.</p>
+
+  <h2>Typical retention periods</h2>
+  <ul>
+    <li>Student account records: for the active academic cycle plus institutional archive period.</li>
+    <li>Attempts and submitted answers: retained with formal assessment records.</li>
+    <li>Incident logs and evidence snapshots: retained for integrity review and grade-appeal windows.</li>
+    <li>Operational logs: retained according to platform log retention settings and support needs.</li>
+  </ul>
+
+  <h2>Deletion and restriction</h2>
+  <p>Deletion requests are handled by the lecturer or institution controlling the course data.
+  Records tied to statutory educational obligations may be restricted from deletion until those
+  obligations expire.</p>
+
+  <h2>Backup and disaster recovery</h2>
+  <p>Retention can be extended temporarily in encrypted backups and recovery snapshots. These copies
+  are used only for restoration and are rotated out according to backup policy.</p>
+
+  <h2>Controller responsibility</h2>
+  <p>Each institution or lecturer acting as controller should define exact retention periods in local
+  policy and communicate them to candidates before exams begin.</p>
+
+  <h2>Contact for retention or deletion requests</h2>
+  <p>Retention-period, deletion, and restriction requests should be raised through your lecturer
+  or institution data-protection contact:</p>
+  <ul>
+    <li>Email: <strong>privacy@yourinstitution.example</strong></li>
+    <li>Office: <strong>Data Protection Officer / Registrar</strong></li>
+  </ul>
+
+  <p class="fine">Last updated: 23 August 2026</p>
+
+  <p class="muted">This policy is a framework, not legal advice. Confirm final retention schedules with
+  institutional legal/compliance teams.</p>
+</section>
+{% endblock %}

@@ -20,7 +20,10 @@
   {% endblock %}
   <main class="wrap">{% block content %}{% endblock %}</main>
   <footer class="site"><div class="wrap">
-    {{ course().footer }} &middot; <a href="/privacy">What this system records</a>
+    {{ course().footer }} &middot;
+    <a href="/privacy">Privacy policy</a> &middot;
+    <a href="/data-collection">Data collection</a> &middot;
+    <a href="/data-retention">Data retention</a>
   </div></footer>
   {% block scripts %}{% endblock %}
 </body>

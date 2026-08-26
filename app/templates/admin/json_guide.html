@@ -1,0 +1,88 @@
+{% extends "admin/_base.html" %}
+{% block admin_content %}
+<h1>JSON Question/Answer Preparation Guide</h1>
+
+<section class="card">
+  <h2>What this import accepts</h2>
+  <p class="muted">The bulk importer accepts one JSON object with three top-level keys:</p>
+  <ul>
+    <li><code>multiple_choice</code> (Section A)</li>
+    <li><code>short_answer</code> (Section B)</li>
+    <li><code>long_writeup</code> (Section C)</li>
+  </ul>
+  <p class="muted">Questions are appended to the current exam. Existing questions are not replaced.</p>
+</section>
+
+<section class="card">
+  <h2>Complete example</h2>
+  <pre>{
+  "multiple_choice": [
+    {
+      "question": "Which model focuses on online value creation from network effects?",
+      "options": [
+        "Value chain model",
+        "Platform model",
+        "Brick-and-mortar only",
+        "Cost-plus model"
+      ],
+      "marks": 2
+    },
+    {
+      "question": "Which statement best describes B2B e-commerce?",
+      "options": [
+        "Transactions between businesses",
+        "Government tax filing",
+        "In-person cash sales only",
+        "Personal social media posts"
+      ],
+      "marks": 2
+    }
+  ],
+  "short_answer": [
+    "Define disintermediation in e-business and give one practical example.",
+    "State two risks of relying on a single online payment provider."
+  ],
+  "long_writeup": [
+    {
+      "title": "Digital Strategy Case",
+      "prompt": "A local retailer is moving online. Propose a phased e-business strategy covering channels, payments, fulfilment, and customer trust.",
+      "marks": 20
+    },
+    {
+      "title": "Governance and Compliance",
+      "prompt": "Discuss how data protection obligations should influence system design choices in an online assessment platform.",
+      "marks": 20
+    }
+  ]
+}</pre>
+</section>
+
+<section class="card">
+  <h2>Field rules</h2>
+  <ul>
+    <li><strong>multiple_choice[].question</strong>: required text prompt.</li>
+    <li><strong>multiple_choice[].options</strong>: required list with at least two options.</li>
+    <li><strong>multiple_choice[].marks</strong>: optional integer, defaults to 0 if missing.</li>
+    <li><strong>short_answer[]</strong>: each item is plain text prompt.</li>
+    <li><strong>long_writeup[].title</strong>: optional heading shown to students.</li>
+    <li><strong>long_writeup[].prompt</strong>: required long-form question.</li>
+    <li><strong>long_writeup[].marks</strong>: optional integer, defaults to 0 if missing.</li>
+  </ul>
+</section>
+
+<section class="card">
+  <h2>About answer keys</h2>
+  <p class="muted">This import flow creates exam questions only. It does not import official answer keys.
+  Student answers are collected during the test attempt and saved automatically.</p>
+</section>
+
+<section class="card">
+  <h2>Common formatting mistakes</h2>
+  <ul>
+    <li>Using smart quotes instead of regular JSON quotes (").</li>
+    <li>Leaving a trailing comma after the last item in a list.</li>
+    <li>Using text instead of a list for <code>options</code>.</li>
+    <li>Pasting multiple JSON objects instead of one object with the three keys.</li>
+  </ul>
+</section>
+{% endblock %}

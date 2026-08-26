@@ -159,6 +159,16 @@ def privacy(request: Request):
     return templates.TemplateResponse(request, "privacy.html", {})
 
 
+@app.get("/data-collection", response_class=HTMLResponse)
+def data_collection(request: Request):
+    return templates.TemplateResponse(request, "data_collection.html", {})
+
+
+@app.get("/data-retention", response_class=HTMLResponse)
+def data_retention(request: Request):
+    return templates.TemplateResponse(request, "data_retention.html", {})
+
+
 # --------------------------------------------------------------------- platform-level
 
 
