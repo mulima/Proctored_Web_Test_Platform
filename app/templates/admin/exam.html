@@ -15,6 +15,8 @@
 <ul class="errors"><li>That is not valid JSON.</li></ul>{% endif %}
 {% if request.query_params.get('imported') %}
 <div class="notice">Imported {{ request.query_params.get('imported') }} question(s).</div>{% endif %}
+{% if request.query_params.get('regenerated') %}
+<div class="notice">Regenerated {{ request.query_params.get('regenerated') }} submission PDF(s) from the database.</div>{% endif %}
 
 <section class="card">
   <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/open') }}">
@@ -38,6 +40,16 @@
     <label>Section C questions to choose<input type="number" name="section_c_required" value="{{ exam.section_c_required }}" min="0"></label>
     <label>Instructions to candidates<textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
     <button class="primary" type="submit">Save settings</button>
+  </form>
+</section>
+
+<section class="card">
+  <h2>Submission PDFs</h2>
+  <p class="muted">Rebuilds every submitted PDF for this exam from the current student, answer,
+  question, and proctoring records. Existing stored PDFs will be replaced.</p>
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/regenerate-pdfs') }}"
+        onsubmit="return confirm('Replace every stored submission PDF for this exam?');">
+    <button class="danger" type="submit">Regenerate all submission PDFs</button>
   </form>
 </section>
 

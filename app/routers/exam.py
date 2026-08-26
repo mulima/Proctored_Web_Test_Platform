@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app import logging_service, pdf, proctor, vision
 from app.config import settings
@@ -285,16 +285,15 @@ def submit(
     attempt.auto_submit_reason = reason[:1000]
     db.commit()
     
-    # SECURITY FIX: Refresh attempt with explicit eager-loading to prevent lazy-loading issues
-    # This ensures student details are loaded from the correct session context
-    from sqlalchemy.orm import joinedload
-    db.expire(attempt)  # Clear potentially stale data
+    # Refresh the attempt and its related records before building the immutable PDF.
+    # selectinload avoids requiring unique() when the exam has multiple questions.
+    db.expire(attempt)
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.id == attempt.id)
         .options(
             joinedload(Attempt.student),
-            joinedload(Attempt.exam).joinedload(Exam.questions)
+            joinedload(Attempt.exam).options(selectinload(Exam.questions))
         )
     )
 

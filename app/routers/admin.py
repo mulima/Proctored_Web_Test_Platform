@@ -14,9 +14,9 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app import logging_service, proctor, vision
+from app import logging_service, pdf, proctor, vision
 from app.config import settings
 from app.db import get_db
 from app.deps import get_course_db, get_lecturer, require_admin, require_admin_ready, templates
@@ -364,6 +364,56 @@ def exam_detail(
             },
             "attempt_count": attempt_count,
         },
+    )
+
+
+@router.post("/exams/{exam_id}/regenerate-pdfs")
+def regenerate_exam_pdfs(
+    exam_id: int,
+    request: Request,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    exam = db.get(Exam, exam_id)
+    if exam is None:
+        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+
+    attempts = db.scalars(
+        select(Attempt)
+        .where(
+            Attempt.exam_id == exam.id,
+            Attempt.is_locked.is_(True),
+            Attempt.submitted_at.is_not(None),
+        )
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam).options(selectinload(Exam.questions)),
+            selectinload(Attempt.answers),
+            selectinload(Attempt.incidents),
+        )
+        .order_by(Attempt.id)
+    ).all()
+
+    for attempt in attempts:
+        attempt.pdf_bytes = pdf.build(
+            attempt,
+            {answer.question_id: answer for answer in attempt.answers},
+            lecturer,
+        )
+        attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+
+    db.commit()
+    logging_service.record(
+        db,
+        "PDFS_REGENERATED",
+        f"Regenerated {len(attempts)} PDF(s) for {exam.title}",
+        level="WARNING",
+        request=request,
+        payload={"exam_id": exam.id, "attempt_count": len(attempts)},
+    )
+    return RedirectResponse(
+        f"/{lecturer.slug}/admin/exams/{exam.id}?regenerated={len(attempts)}",
+        status_code=303,
     )
 
 

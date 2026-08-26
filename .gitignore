@@ -1,9 +1,12 @@
 __pycache__/
 *.py[cod]
+database_dump.sql
 .env
 *.db
 *.sqlite3
+database_dump.sql
 .venv/
 venv/
 app/static/models/*.onnx
 app/static/js/ort.min.js
+node_modules
