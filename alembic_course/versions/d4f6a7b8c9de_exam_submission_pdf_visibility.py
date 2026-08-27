@@ -20,7 +20,10 @@ def upgrade() -> None:
             server_default=sa.true(),
         ),
     )
-    op.alter_column("exams", "show_submission_pdf", server_default=None)
+    # Plain op.alter_column() issues a raw ALTER COLUMN, which SQLite doesn't support -
+    # batch mode rebuilds the table instead, same pattern as every other migration here.
+    with op.batch_alter_table("exams", schema=None) as batch_op:
+        batch_op.alter_column("show_submission_pdf", server_default=None)
 
 
 def downgrade() -> None:

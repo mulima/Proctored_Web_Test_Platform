@@ -74,11 +74,15 @@ def upgrade() -> None:
     op.create_index("ix_submission_audit_events_status", "submission_audit_events", ["status"])
     op.create_index("ix_submission_audit_events_at", "submission_audit_events", ["at"])
 
-    op.alter_column("attempts", "reviewed_by", server_default=None)
-    op.alter_column("attempts", "review_notes", server_default=None)
-    op.alter_column("attempts", "last_pdf_audit_stored_sha256", server_default=None)
-    op.alter_column("attempts", "last_pdf_audit_current_sha256", server_default=None)
-    op.alter_column("attempts", "last_pdf_audit_message", server_default=None)
+    # Plain op.alter_column() issues a raw ALTER COLUMN, which SQLite doesn't support -
+    # batch mode rebuilds the table instead, same pattern as every other migration here.
+    # One batch context for all five so SQLite only rebuilds the table once.
+    with op.batch_alter_table("attempts", schema=None) as batch_op:
+        batch_op.alter_column("reviewed_by", server_default=None)
+        batch_op.alter_column("review_notes", server_default=None)
+        batch_op.alter_column("last_pdf_audit_stored_sha256", server_default=None)
+        batch_op.alter_column("last_pdf_audit_current_sha256", server_default=None)
+        batch_op.alter_column("last_pdf_audit_message", server_default=None)
 
 
 def downgrade() -> None:
