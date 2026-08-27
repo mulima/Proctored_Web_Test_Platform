@@ -1,0 +1,7 @@
+# Forces the Python provider. A stray package.json at the repo root (devDependency
+# on the Supabase CLI for local tooling only - see package.json) can otherwise make
+# Nixpacks' auto-detection route the build through Node instead of Python, leaving
+# the actual app's venv (and everything in requirements.txt, including alembic and
+# uvicorn) off PATH at both build and container-start time. This app is Python only;
+# nothing here is meant to run under Node.
+providers = ["python"]
