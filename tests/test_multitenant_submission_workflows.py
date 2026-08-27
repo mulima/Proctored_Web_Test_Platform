@@ -322,6 +322,34 @@ def test_dashboard_identity_is_scoped_to_student_session_and_not_cacheable(app_e
     assert r2.headers["vary"] == "Cookie"
 
 
+def test_student_login_redirects_to_own_dashboard(app_env):
+    course_path = app_env["tmp_path"] / "student_login.sqlite3"
+    course_url = f"sqlite:///{course_path}"
+    course_session_factory = _make_course_db(course_path)
+    with app_env["PlatformSessionLocal"]() as platform_db:
+        _create_lecturer(platform_db, slug="logincheck", course_db_url=course_url)
+
+    _, student_ids, _ = _seed_exam_with_attempts(course_session_factory, student_count=1, submitted=False)
+    with course_session_factory() as db:
+        student = db.get(Student, student_ids[0])
+
+    app = __import__("app.main", fromlist=["app"]).app
+    client = TestClient(app, follow_redirects=False)
+    response = client.post(
+        "/logincheck/login",
+        data={"email": student.email, "password": "student-pass"},
+    )
+
+    assert response.status_code == 303
+    assert response.headers["location"] == "/logincheck/"
+    assert settings.session_cookie in client.cookies
+
+    dashboard = client.get("/logincheck/")
+    assert dashboard.status_code == 200
+    assert f"Hello, {student.full_name}" in dashboard.text
+    assert student.computer_number in dashboard.text
+
+
 def test_pdf_visibility_toggle(app_env):
     course_path = app_env["tmp_path"] / "visibility.sqlite3"
     course_url = f"sqlite:///{course_path}"
