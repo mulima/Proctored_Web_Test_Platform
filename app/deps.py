@@ -14,13 +14,16 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
+from sqlalchemy.exc import InterfaceError, OperationalError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.db import get_db
 from app.models_course import Student
+from app import logging_service
 from app.models_platform import Lecturer
+from app.monitoring import repeated_platform_event
 from app.security import read_session_cookie
 from app.tenant_db import course_session
 
@@ -50,10 +53,11 @@ def course_url(context, path: str = "") -> str:
     """Jinja global: prefixes a path with the current request's course slug.
     Outside any course context (platform-level pages) returns the path unchanged -
     those pages never call this on anything but harmless self-links."""
-    lecturer = _lecturer_from(context)
-    if lecturer is None:
+    request = context.get("request")
+    slug = getattr(request.state, "course_slug", "") if request is not None else ""
+    if not slug:
         return path or "/"
-    return f"/{lecturer.slug}{path}"
+    return f"/{slug}{path}"
 
 
 @dataclass
@@ -71,12 +75,18 @@ def course(context) -> _CourseBranding:
     to provide when a course had nothing configured. Works identically on
     platform-level pages, where there is no lecturer at all - everything falls
     back to the platform's own generic name."""
-    lecturer = _lecturer_from(context)
+    request = context.get("request")
+    brand = getattr(request.state, "course_brand", "") if request is not None else ""
+    subtitle = (
+        getattr(request.state, "course_subtitle", "") if request is not None else ""
+    )
+    footer = getattr(request.state, "course_footer", "") if request is not None else ""
+    slug = getattr(request.state, "course_slug", "") if request is not None else ""
     return _CourseBranding(
-        brand=(lecturer.brand if lecturer else "") or settings.app_name,
-        subtitle=(lecturer.subtitle if lecturer else "") or "Assessment with clarity and integrity.",
-        footer=(lecturer.footer if lecturer else "") or settings.app_name,
-        slug=lecturer.slug if lecturer else "",
+        brand=brand or settings.app_name,
+        subtitle=subtitle or "Assessment with clarity and integrity.",
+        footer=footer or settings.app_name,
+        slug=slug,
     )
 
 
@@ -101,6 +111,10 @@ def get_lecturer(request: Request, slug: str, platform_db: Session = Depends(get
     if lecturer is None:
         raise HTTPException(status_code=404, detail="No course found at this address.")
     request.state.lecturer = lecturer
+    request.state.course_slug = lecturer.slug
+    request.state.course_brand = lecturer.course_code or settings.app_name
+    request.state.course_subtitle = lecturer.course_title or "Assessment with clarity and integrity."
+    request.state.course_footer = lecturer.institution or settings.app_name
     return lecturer
 
 
@@ -118,7 +132,18 @@ def require_course_ready(lecturer: Lecturer = Depends(get_lecturer)) -> Lecturer
 
 
 def get_course_db(lecturer: Lecturer = Depends(require_course_ready)):
-    yield from course_session(lecturer)
+    try:
+        yield from course_session(lecturer)
+    except HTTPException:
+        raise
+    except (OperationalError, InterfaceError):
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=(
+                "Course database is unavailable for this course. "
+                f"Reconnect it at /{lecturer.slug}/admin/setup."
+            ),
+        )
 
 
 # --------------------------------------------------------------------------- auth
@@ -132,9 +157,25 @@ def current_student(
     request: Request,
     lecturer: Lecturer = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
+    platform_db: Session = Depends(get_db),
 ) -> Student | None:
     data = session_data(request)
-    if not data or data.get("role") != "student" or data.get("slug") != lecturer.slug:
+    if not data or data.get("role") != "student":
+        return None
+    if data.get("slug") != lecturer.slug:
+        logging_service.record_platform(
+            platform_db,
+            "CROSS_COURSE_ACCESS",
+            "Session cookie course does not match request course.",
+            request=request,
+            payload={"requested_slug": lecturer.slug},
+        )
+        repeated_platform_event(
+            platform_db,
+            "CROSS_COURSE_ACCESS",
+            request=request,
+            message="Repeated cross-course session access patterns detected.",
+        )
         return None
     student = db.get(Student, data.get("id"))
     if student is None or student.is_blocked:

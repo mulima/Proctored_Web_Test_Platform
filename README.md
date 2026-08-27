@@ -94,6 +94,9 @@ into the app service automatically. This holds lecturer accounts, not any course
 | `BASE_URL` | yes | e.g. `https://yourplatform.up.railway.app` — used in every verification/alert link, for every course |
 | `MAIL_BACKEND` | yes | `smtp`, `resend`, or `console` — shared across every course on this deployment |
 | `MAIL_FROM` | yes | e.g. `Proctored Test Platform <no-reply@yourdomain.zm>` |
+| `ALERT_EMAIL` | no | Operator address for critical alerts; blank keeps alerts in application logs |
+| `ALERT_THRESHOLD` | no | Repeated login/access events required before an alert (default 5) |
+| `ALERT_WINDOW_MINUTES` | no | Time window for repeated login/access detection (default 10) |
 | `DATABASE_URL` | auto | Injected by the Postgres addon — the *platform* database |
 | `REQUIRE_ADMIN_APPROVAL` | no | Default a lecturer's course starts with; `true` turns their roster into an allowlist they approve by hand |
 | `ALLOWED_EMAIL_DOMAINS` | no | e.g. `unza.zm` to restrict who may register, across every course |

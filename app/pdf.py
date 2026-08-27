@@ -61,7 +61,7 @@ def build(attempt: Attempt, answers_by_question: dict[int, "object"], lecturer: 
             canPrint=1,
             canModify=0,
             canCopy=0,
-            canAnnotate=1,
+            canAnnotate=0,
             strength=128,
         ),
         rightMargin=18 * mm,

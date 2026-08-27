@@ -17,6 +17,7 @@ from app import logging_service
 from app.config import settings
 from app.deps import get_course_db, get_lecturer, require_course_ready, templates
 from app.mailer import Message, send
+from app.monitoring import repeated_course_event
 from app.models_course import Student
 from app.models_platform import Lecturer
 from app.security import (
@@ -420,6 +421,12 @@ def login(
             level="WARNING",
             student_id=student.id if student else None,
             request=request,
+        )
+        repeated_course_event(
+            db,
+            "LOGIN_FAILED",
+            request=request,
+            message="Repeated student login failures detected.",
         )
         return templates.TemplateResponse(
             request,

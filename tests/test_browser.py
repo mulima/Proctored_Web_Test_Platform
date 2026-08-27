@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("Legacy single-tenant browser test; replaced by multi-tenant pytest suite.", allow_module_level=True)
+
 """Drives the sitting page in a real Chromium against a scripted fake webcam.
 
 This container's Chromium exposes no capture devices, so tests/fake_camera.js replaces

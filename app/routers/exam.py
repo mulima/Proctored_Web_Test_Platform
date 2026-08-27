@@ -260,6 +260,10 @@ def submit(
     auto = bool(body.get("auto"))
     reason = str(body.get("reason") or "")
 
+    if not auto and proctor.is_expired(attempt):
+        auto = True
+        reason = "Time expired."
+
     if not auto:
         required = attempt.exam.section_c_required
         selected = sum(
@@ -283,17 +287,17 @@ def submit(
     attempt.is_locked = True
     attempt.submission_mode = "automatic" if auto else "manual"
     attempt.auto_submit_reason = reason[:1000]
-    db.commit()
-    
-    # Refresh the attempt and its related records before building the immutable PDF.
-    # selectinload avoids requiring unique() when the exam has multiple questions.
-    db.expire(attempt)
+
+    # Render before committing the lock. If rendering fails, the request transaction
+    # rolls back and the student can retry instead of being locked without a PDF.
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.id == attempt.id)
         .options(
             joinedload(Attempt.student),
-            joinedload(Attempt.exam).options(selectinload(Exam.questions))
+            joinedload(Attempt.exam).options(selectinload(Exam.questions)),
+            selectinload(Attempt.answers),
+            selectinload(Attempt.incidents),
         )
     )
 
@@ -301,6 +305,17 @@ def submit(
     attempt.pdf_bytes = document
     attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
     db.commit()
+
+    if not attempt.pdf_bytes:
+        from app.monitoring import course_alert
+
+        course_alert(
+            db,
+            "ATTEMPT_LOCKED_WITHOUT_PDF",
+            f"Attempt {attempt.id} was submitted without PDF bytes.",
+            request=request,
+            payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id},
+        )
 
     logging_service.record(
         db,
@@ -313,6 +328,44 @@ def submit(
     )
     _email_submission(db, attempt, document, lecturer)
     return {"ok": True, "locked": True, "redirect": f"/{lecturer.slug}/submitted"}
+
+
+@router.get("/api/review", response_class=HTMLResponse)
+def review(
+    request: Request,
+    student: Student = Depends(require_student),
+    lecturer: Lecturer = Depends(require_course_ready),
+    db: Session = Depends(get_course_db),
+):
+    attempt = _live_attempt(db, student)
+    if attempt is None:
+        return HTMLResponse("No live attempt.", status_code=409)
+    if proctor.is_expired(attempt):
+        return HTMLResponse("Time expired.", status_code=409)
+
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt.id)
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam).options(selectinload(Exam.questions)),
+            selectinload(Attempt.answers),
+            selectinload(Attempt.incidents),
+        )
+    )
+    answers = {answer.question_id: answer for answer in attempt.answers}
+    questions = sorted(attempt.exam.questions, key=lambda q: (q.section, q.order_index))
+    return templates.TemplateResponse(
+        request,
+        "review.html",
+        {
+            "student": student,
+            "attempt": attempt,
+            "exam": attempt.exam,
+            "questions": questions,
+            "answers": answers,
+        },
+    )
 
 
 @router.get("/submitted", response_class=HTMLResponse)
@@ -349,7 +402,7 @@ def my_submission(
         .where(Attempt.student_id == student.id, Attempt.is_locked.is_(True))
         .order_by(Attempt.submitted_at.desc())
     )
-    if attempt is None or not attempt.pdf_bytes:
+    if attempt is None or not attempt.exam.show_submission_pdf or not attempt.pdf_bytes:
         return JSONResponse({"error": "No submission found."}, status_code=404)
     return Response(
         content=attempt.pdf_bytes,

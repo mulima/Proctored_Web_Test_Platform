@@ -13,6 +13,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from app.config import settings
+from app.monitoring import notify_operator
 
 
 class Base(DeclarativeBase):
@@ -42,6 +43,7 @@ def get_db() -> Iterator[Session]:
         session.commit()
     except Exception:
         session.rollback()
+        notify_operator("ClearGrade alert: PLATFORM_DATABASE_FAILURE", "The platform database request failed. Check application logs for the exception.")
         raise
     finally:
         session.close()

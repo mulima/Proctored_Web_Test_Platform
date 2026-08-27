@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("Legacy single-tenant persistence test; replaced by multi-tenant pytest suite.", allow_module_level=True)
+
 """Checks the durability promise: data survives redeploys, schema moves only on migration.
 
 A Railway redeploy runs `alembic upgrade head` and then starts the app. Nothing in that

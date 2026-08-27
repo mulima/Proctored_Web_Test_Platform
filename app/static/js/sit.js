@@ -451,6 +451,40 @@
     await doSubmit(false, "");
   }
 
+  async function review() {
+    capture();
+    await save();
+    if (remaining <= 0) {
+      await doSubmit(true, "Time expired.");
+      return;
+    }
+    try {
+      const response = await fetch(data.coursePrefix + "/api/review");
+      if (response.status === 409) {
+        await doSubmit(true, "Time expired.");
+        return;
+      }
+      if (!response.ok) throw new Error("Review failed");
+      const html = await response.text();
+      const parsed = new DOMParser().parseFromString(html, "text/html");
+      el("reviewContent").innerHTML = parsed.body.innerHTML;
+      el("reviewOverlay").style.display = "flex";
+      el("reviewOverlay").setAttribute("aria-hidden", "false");
+    } catch (error) {
+      showAlert("review", "Could not load the final review. Your answers remain saved.", "warn", 10000);
+    }
+  }
+
+  function closeReview() {
+    el("reviewOverlay").style.display = "none";
+    el("reviewOverlay").setAttribute("aria-hidden", "true");
+  }
+
+  async function submitReview() {
+    closeReview();
+    await doSubmit(false, "");
+  }
+
   async function doSubmit(auto, reason) {
     if (submitted) return;
     capture();
@@ -557,6 +591,6 @@
     }
   });
 
-  global.MBS = { next, previous, manualSubmit, enterFullscreen };
+  global.MBS = { next, previous, manualSubmit, review, closeReview, submitReview, enterFullscreen };
   boot();
 })(window);

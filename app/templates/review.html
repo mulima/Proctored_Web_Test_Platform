@@ -1,0 +1,28 @@
+<article class="review-document">
+  <h1>Final submission review</h1>
+  <p>Check the rendering below. This is a read-only preview and cannot be downloaded.</p>
+  <table class="review-meta">
+    <tr><td>Student Name</td><td>{{ student.full_name }}</td></tr>
+    <tr><td>Computer Number</td><td>{{ student.computer_number }}</td></tr>
+    <tr><td>Email</td><td>{{ student.email }}</td></tr>
+    <tr><td>Exam</td><td>{{ exam.title }}</td></tr>
+    <tr><td>Submission mode</td><td>Manual submission if submitted before time expires</td></tr>
+  </table>
+
+  {% for letter, name in [('A', 'Section A: Multiple Choice'), ('B', 'Section B: Short Answer'), ('C', 'Section C: Long Writeup')] %}
+    {% set section_questions = questions | selectattr('section', 'equalto', letter) | list %}
+    {% if section_questions %}
+      <section class="review-section">
+        <h2>{{ name }}</h2>
+        {% for question in section_questions %}
+          {% set answer = answers.get(question.id) %}
+          {% if letter != 'C' or (answer and answer.selected) %}
+            <h3>Question {{ loop.index }}{% if question.title %}: {{ question.title }}{% endif %}</h3>
+            {% if letter != 'A' %}<p>{{ question.prompt }}</p>{% endif %}
+            <div class="review-answer">{% if answer and answer.value %}{{ answer.value }}{% else %}No answer{% endif %}</div>
+          {% endif %}
+        {% endfor %}
+      </section>
+    {% endif %}
+  {% endfor %}
+</article>

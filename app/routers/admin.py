@@ -9,7 +9,11 @@ validated (require_admin_ready) - see app/deps.py.
 """
 
 import json
+import hashlib
+import csv
 from datetime import datetime
+from io import BytesIO, StringIO
+from zipfile import ZIP_DEFLATED, ZipFile
 
 from fastapi import APIRouter, Depends, Form, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
@@ -20,7 +24,16 @@ from app import logging_service, pdf, proctor, vision
 from app.config import settings
 from app.db import get_db
 from app.deps import get_course_db, get_lecturer, require_admin, require_admin_ready, templates
-from app.models_course import AppLog, Attempt, Exam, Question, Snapshot, Student
+from app.monitoring import repeated_platform_event
+from app.models_course import (
+    AppLog,
+    Attempt,
+    Exam,
+    Question,
+    Snapshot,
+    Student,
+    SubmissionAuditEvent,
+)
 from app.models_platform import Lecturer
 from app.security import set_session_cookie, verify_password
 from app.tenant_crypto import CredentialEncryptionError, encrypt
@@ -28,11 +41,100 @@ from app.tenant_db import (
     default_platform_schema_name,
     engine_for_url,
     forget,
+    probe_course_connection,
     provision_platform_schema,
     validate_schema,
 )
 
 router = APIRouter(prefix="/admin")
+
+
+def _sha256(value: bytes | None) -> str:
+    if not value:
+        return ""
+    return hashlib.sha256(value).hexdigest()
+
+
+def _record_submission_audit(
+    db: Session,
+    *,
+    attempt: Attempt,
+    action: str,
+    status: str,
+    actor: str,
+    message: str,
+    stored_sha256: str = "",
+    current_sha256: str = "",
+    is_match: bool | None = None,
+    payload: dict | None = None,
+) -> None:
+    db.add(
+        SubmissionAuditEvent(
+            attempt_id=attempt.id,
+            exam_id=attempt.exam_id,
+            action=action,
+            status=status,
+            actor=actor,
+            message=message,
+            stored_pdf_sha256=stored_sha256,
+            current_pdf_sha256=current_sha256,
+            is_match=is_match,
+            payload=payload,
+        )
+    )
+
+
+def _exam_audit_rows(attempts: list[Attempt]) -> list[dict]:
+    rows: list[dict] = []
+    for attempt in attempts:
+        events = sorted(list(attempt.audit_events), key=lambda item: item.id)
+        regenerate_count = sum(1 for event in events if event.action == "regenerate")
+        compare_count = sum(1 for event in events if event.action == "compare")
+        mismatch_count = sum(
+            1
+            for event in events
+            if event.action == "compare" and event.is_match is False
+        )
+        review_count = sum(1 for event in events if event.action == "review")
+        last_action = events[-1] if events else None
+
+        rows.append(
+            {
+                "attempt_id": attempt.id,
+                "student_id": attempt.student.id,
+                "student_computer_number": attempt.student.computer_number,
+                "student_name": attempt.student.full_name,
+                "student_email": attempt.student.email,
+                "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else "",
+                "is_locked": bool(attempt.is_locked),
+                "submission_mode": attempt.submission_mode or "",
+                "flagged": bool(attempt.flagged),
+                "strike_count": int(attempt.strike_count or 0),
+                "snapshot_count": len(attempt.snapshots),
+                "reviewed_at": attempt.reviewed_at.isoformat() if attempt.reviewed_at else "",
+                "reviewed_by": attempt.reviewed_by or "",
+                "review_notes": attempt.review_notes or "",
+                "last_pdf_audit_at": (
+                    attempt.last_pdf_audit_at.isoformat() if attempt.last_pdf_audit_at else ""
+                ),
+                "last_pdf_audit_match": attempt.last_pdf_audit_match,
+                "last_pdf_audit_stored_sha256": attempt.last_pdf_audit_stored_sha256 or "",
+                "last_pdf_audit_current_sha256": attempt.last_pdf_audit_current_sha256 or "",
+                "last_pdf_audit_message": attempt.last_pdf_audit_message or "",
+                "regeneration_count": regenerate_count,
+                "compare_count": compare_count,
+                "compare_mismatch_count": mismatch_count,
+                "review_mark_count": review_count,
+                "history_event_count": len(events),
+                "last_history_action": last_action.action if last_action else "",
+                "last_history_status": last_action.status if last_action else "",
+                "last_history_actor": last_action.actor if last_action else "",
+                "last_history_at": (
+                    last_action.at.isoformat() if last_action and last_action.at else ""
+                ),
+            }
+        )
+    return rows
 
 
 @router.get("/login", response_class=HTMLResponse)
@@ -60,6 +162,12 @@ def login(
             lecturer_id=lecturer.id,
             request=request,
         )
+        repeated_platform_event(
+            platform_db,
+            "ADMIN_LOGIN_FAILED",
+            request=request,
+            message="Repeated lecturer login failures detected.",
+        )
         return templates.TemplateResponse(
             request,
             "admin/login.html",
@@ -79,6 +187,25 @@ def login(
             },
             status_code=403,
         )
+
+    if lecturer.database_ready:
+        db_probe_error = probe_course_connection(lecturer)
+        if db_probe_error:
+            logging_service.record_platform(
+                platform_db,
+                "ADMIN_LOGIN_DB_UNAVAILABLE",
+                db_probe_error,
+                level="ERROR",
+                lecturer_id=lecturer.id,
+                request=request,
+            )
+            response = RedirectResponse(
+                f"/{lecturer.slug}/admin/setup?db_unavailable=1",
+                status_code=303,
+            )
+            set_session_cookie(response, role="admin", slug=lecturer.slug, id=lecturer.id)
+            return response
+
     logging_service.record_platform(
         platform_db, "ADMIN_LOGIN", email, lecturer_id=lecturer.id, request=request
     )
@@ -394,13 +521,40 @@ def regenerate_exam_pdfs(
         .order_by(Attempt.id)
     ).all()
 
-    for attempt in attempts:
-        attempt.pdf_bytes = pdf.build(
-            attempt,
-            {answer.question_id: answer for answer in attempt.answers},
-            lecturer,
+    try:
+        for attempt in attempts:
+            old_sha256 = _sha256(attempt.pdf_bytes)
+            answers_by_question = {answer.question_id: answer for answer in attempt.answers}
+            rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+            rebuilt_sha256 = _sha256(rebuilt)
+            attempt.pdf_bytes = rebuilt
+            attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+            _record_submission_audit(
+                db,
+                attempt=attempt,
+                action="regenerate",
+                status="ok",
+                actor=lecturer.email,
+                message="Submission PDF regenerated from current records.",
+                stored_sha256=old_sha256,
+                current_sha256=rebuilt_sha256,
+                is_match=(old_sha256 == rebuilt_sha256) if old_sha256 else None,
+            )
+    except Exception as exc:
+        db.rollback()
+        from app.monitoring import course_alert
+
+        course_alert(
+            db,
+            "PDF_REGENERATION_FAILED",
+            f"PDF regeneration failed for exam {exam.id}: {type(exc).__name__}",
+            request=request,
+            payload={"exam_id": exam.id},
         )
-        attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+        return RedirectResponse(
+            f"/{lecturer.slug}/admin/exams/{exam.id}?error=regeneration",
+            status_code=303,
+        )
 
     db.commit()
     logging_service.record(
@@ -417,6 +571,374 @@ def regenerate_exam_pdfs(
     )
 
 
+@router.get("/exams/{exam_id}/submission-pdfs.zip")
+def exam_submission_pdfs_zip(
+    exam_id: int,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    exam = db.get(Exam, exam_id)
+    if exam is None:
+        return JSONResponse({"error": "Exam not found."}, status_code=404)
+
+    attempts = db.scalars(
+        select(Attempt)
+        .where(
+            Attempt.exam_id == exam.id,
+            Attempt.is_locked.is_(True),
+            Attempt.submitted_at.is_not(None),
+            Attempt.pdf_bytes.is_not(None),
+        )
+        .options(joinedload(Attempt.student), joinedload(Attempt.exam))
+        .order_by(Attempt.id)
+    ).all()
+
+    archive = BytesIO()
+    with ZipFile(archive, mode="w", compression=ZIP_DEFLATED) as bundle:
+        for attempt in attempts:
+            filename = (attempt.pdf_filename or "").strip() or pdf.filename_for(attempt, lecturer)
+            if not filename.lower().endswith(".pdf"):
+                filename += ".pdf"
+            # Prefix attempt id to keep names stable and unique across same-student retries.
+            bundle.writestr(f"attempt_{attempt.id}_{filename}", attempt.pdf_bytes or b"")
+
+    filename = f"submission_pdfs_exam_{exam.id}.zip"
+    return Response(
+        content=archive.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/audit-report.json")
+def exam_audit_report_json(
+    exam_id: int,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    exam = db.get(Exam, exam_id)
+    if exam is None:
+        return JSONResponse({"error": "Exam not found."}, status_code=404)
+
+    attempts = db.scalars(
+        select(Attempt)
+        .where(Attempt.exam_id == exam.id)
+        .options(
+            joinedload(Attempt.student),
+            selectinload(Attempt.snapshots),
+            selectinload(Attempt.audit_events),
+        )
+        .order_by(Attempt.id)
+    ).all()
+    rows = _exam_audit_rows(attempts)
+
+    payload = {
+        "exam": {
+            "id": exam.id,
+            "title": exam.title,
+            "code": exam.code,
+        },
+        "generated_at": datetime.utcnow().isoformat(),
+        "summary": {
+            "attempt_count": len(rows),
+            "submitted_count": sum(1 for row in rows if row["submitted_at"]),
+            "flagged_count": sum(1 for row in rows if row["flagged"]),
+            "reviewed_count": sum(1 for row in rows if row["reviewed_at"]),
+            "mismatch_count": sum(1 for row in rows if row["last_pdf_audit_match"] is False),
+        },
+        "attempts": rows,
+    }
+
+    filename = f"audit_exam_{exam.id}.json"
+    return Response(
+        content=json.dumps(payload, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/exams/{exam_id}/audit-report.csv")
+def exam_audit_report_csv(
+    exam_id: int,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    exam = db.get(Exam, exam_id)
+    if exam is None:
+        return JSONResponse({"error": "Exam not found."}, status_code=404)
+
+    attempts = db.scalars(
+        select(Attempt)
+        .where(Attempt.exam_id == exam.id)
+        .options(
+            joinedload(Attempt.student),
+            selectinload(Attempt.snapshots),
+            selectinload(Attempt.audit_events),
+        )
+        .order_by(Attempt.id)
+    ).all()
+    rows = _exam_audit_rows(attempts)
+
+    columns = [
+        "attempt_id",
+        "student_id",
+        "student_computer_number",
+        "student_name",
+        "student_email",
+        "submitted_at",
+        "is_locked",
+        "submission_mode",
+        "flagged",
+        "strike_count",
+        "snapshot_count",
+        "reviewed_at",
+        "reviewed_by",
+        "review_notes",
+        "last_pdf_audit_at",
+        "last_pdf_audit_match",
+        "last_pdf_audit_stored_sha256",
+        "last_pdf_audit_current_sha256",
+        "last_pdf_audit_message",
+        "regeneration_count",
+        "compare_count",
+        "compare_mismatch_count",
+        "review_mark_count",
+        "history_event_count",
+        "last_history_action",
+        "last_history_status",
+        "last_history_actor",
+        "last_history_at",
+    ]
+    buffer = StringIO()
+    writer = csv.DictWriter(buffer, fieldnames=columns)
+    writer.writeheader()
+    for row in rows:
+        writer.writerow({key: row.get(key, "") for key in columns})
+
+    filename = f"audit_exam_{exam.id}.csv"
+    return Response(
+        content=buffer.getvalue(),
+        media_type="text/csv",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.post("/attempts/{attempt_id}/regenerate-pdf")
+def regenerate_attempt_pdf(
+    attempt_id: int,
+    request: Request,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt_id)
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam).options(selectinload(Exam.questions)),
+            selectinload(Attempt.answers),
+            selectinload(Attempt.incidents),
+        )
+    )
+    if attempt is None:
+        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+
+    old_sha256 = _sha256(attempt.pdf_bytes)
+    answers_by_question = {answer.question_id: answer for answer in attempt.answers}
+    rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+    attempt.pdf_bytes = rebuilt
+    attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+    _record_submission_audit(
+        db,
+        attempt=attempt,
+        action="regenerate",
+        status="ok",
+        actor=lecturer.email,
+        message="Submission PDF regenerated from current records.",
+        stored_sha256=old_sha256,
+        current_sha256=_sha256(rebuilt),
+        is_match=(old_sha256 == _sha256(rebuilt)) if old_sha256 else None,
+    )
+    db.commit()
+    logging_service.record(
+        db,
+        "PDF_REGENERATED",
+        f"Attempt {attempt.id}",
+        request=request,
+        payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id},
+    )
+    return RedirectResponse(
+        f"/{lecturer.slug}/admin/attempts/{attempt.id}?regen=1",
+        status_code=303,
+    )
+
+
+@router.post("/attempts/{attempt_id}/compare-pdf")
+def compare_attempt_pdf(
+    attempt_id: int,
+    request: Request,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt_id)
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam).options(selectinload(Exam.questions)),
+            selectinload(Attempt.answers),
+            selectinload(Attempt.incidents),
+        )
+    )
+    if attempt is None:
+        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+
+    answers_by_question = {answer.question_id: answer for answer in attempt.answers}
+    rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+    stored_sha256 = _sha256(attempt.pdf_bytes)
+    current_sha256 = _sha256(rebuilt)
+    is_match = bool(stored_sha256) and stored_sha256 == current_sha256
+    message = (
+        "Stored PDF matches current records."
+        if is_match
+        else "Stored PDF differs from current records."
+    )
+
+    attempt.last_pdf_audit_at = datetime.utcnow()
+    attempt.last_pdf_audit_match = is_match
+    attempt.last_pdf_audit_stored_sha256 = stored_sha256
+    attempt.last_pdf_audit_current_sha256 = current_sha256
+    attempt.last_pdf_audit_message = message
+
+    _record_submission_audit(
+        db,
+        attempt=attempt,
+        action="compare",
+        status="ok" if is_match else "warning",
+        actor=lecturer.email,
+        message=message,
+        stored_sha256=stored_sha256,
+        current_sha256=current_sha256,
+        is_match=is_match,
+    )
+    db.commit()
+    logging_service.record(
+        db,
+        "PDF_COMPARED",
+        f"Attempt {attempt.id}: {'match' if is_match else 'mismatch'}",
+        request=request,
+        payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id, "is_match": is_match},
+    )
+    return RedirectResponse(
+        f"/{lecturer.slug}/admin/attempts/{attempt.id}?cmp={'match' if is_match else 'mismatch'}",
+        status_code=303,
+    )
+
+
+@router.post("/attempts/{attempt_id}/mark-reviewed")
+def mark_attempt_reviewed(
+    attempt_id: int,
+    request: Request,
+    review_notes: str = Form(""),
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    attempt = db.scalar(select(Attempt).where(Attempt.id == attempt_id))
+    if attempt is None:
+        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+
+    attempt.reviewed_at = datetime.utcnow()
+    attempt.reviewed_by = lecturer.email
+    attempt.review_notes = (review_notes or "").strip()
+
+    _record_submission_audit(
+        db,
+        attempt=attempt,
+        action="review",
+        status="ok",
+        actor=lecturer.email,
+        message="Submission marked as reviewed.",
+        payload={"review_notes": attempt.review_notes},
+    )
+    db.commit()
+    logging_service.record(
+        db,
+        "SUBMISSION_REVIEWED",
+        f"Attempt {attempt.id}",
+        request=request,
+        payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id},
+    )
+    return RedirectResponse(
+        f"/{lecturer.slug}/admin/attempts/{attempt.id}?reviewed=1",
+        status_code=303,
+    )
+
+
+@router.get("/attempts/{attempt_id}/audit-report")
+def attempt_audit_report(
+    attempt_id: int,
+    lecturer: Lecturer = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    attempt = db.scalar(
+        select(Attempt)
+        .where(Attempt.id == attempt_id)
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam),
+            selectinload(Attempt.audit_events),
+        )
+    )
+    if attempt is None:
+        return JSONResponse({"error": "Attempt not found."}, status_code=404)
+
+    payload = {
+        "attempt_id": attempt.id,
+        "exam": {"id": attempt.exam.id, "title": attempt.exam.title},
+        "student": {
+            "id": attempt.student.id,
+            "full_name": attempt.student.full_name,
+            "computer_number": attempt.student.computer_number,
+            "email": attempt.student.email,
+        },
+        "submitted_at": attempt.submitted_at.isoformat() if attempt.submitted_at else None,
+        "review": {
+            "reviewed_at": attempt.reviewed_at.isoformat() if attempt.reviewed_at else None,
+            "reviewed_by": attempt.reviewed_by or "",
+            "review_notes": attempt.review_notes or "",
+        },
+        "pdf_compare": {
+            "at": attempt.last_pdf_audit_at.isoformat() if attempt.last_pdf_audit_at else None,
+            "is_match": attempt.last_pdf_audit_match,
+            "stored_sha256": attempt.last_pdf_audit_stored_sha256 or "",
+            "current_sha256": attempt.last_pdf_audit_current_sha256 or "",
+            "message": attempt.last_pdf_audit_message or "",
+        },
+        "history": [
+            {
+                "id": event.id,
+                "at": event.at.isoformat() if event.at else None,
+                "action": event.action,
+                "status": event.status,
+                "actor": event.actor,
+                "message": event.message,
+                "stored_sha256": event.stored_pdf_sha256,
+                "current_sha256": event.current_pdf_sha256,
+                "is_match": event.is_match,
+                "payload": event.payload,
+            }
+            for event in sorted(attempt.audit_events, key=lambda item: item.id)
+        ],
+    }
+
+    filename = f"audit_attempt_{attempt.id}.json"
+    return Response(
+        content=json.dumps(payload, indent=2, default=str),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
 @router.post("/exams/{exam_id}/settings")
 def update_exam(
     exam_id: int,
@@ -426,6 +948,7 @@ def update_exam(
     total_marks: int = Form(100),
     section_c_required: int = Form(2),
     instructions: str = Form(""),
+    show_submission_pdf: str = Form(""),
     lecturer: Lecturer = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
@@ -437,6 +960,7 @@ def update_exam(
     exam.total_marks = total_marks
     exam.section_c_required = max(0, section_c_required)
     exam.instructions = instructions
+    exam.show_submission_pdf = bool(show_submission_pdf)
     db.commit()
     logging_service.record(db, "EXAM_UPDATED", exam.title, request=request)
     return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam_id}", status_code=303)
@@ -701,16 +1225,43 @@ def student_action(
 def attempts(
     request: Request,
     flagged: int = 0,
+    exam_id: int | None = None,
     lecturer: Lecturer = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    query = select(Attempt).order_by(desc(Attempt.id))
+    query = (
+        select(Attempt)
+        .options(joinedload(Attempt.student), joinedload(Attempt.exam))
+        .order_by(desc(Attempt.id))
+    )
     if flagged:
         query = query.where(Attempt.flagged.is_(True))
+
+    selected_exam: Exam | None = None
+    if exam_id is not None:
+        selected_exam = db.get(Exam, exam_id)
+        if selected_exam is not None:
+            query = query.where(Attempt.exam_id == exam_id)
+
+    count_query = select(Attempt.exam_id, func.count(Attempt.id)).group_by(Attempt.exam_id)
+    if flagged:
+        count_query = count_query.where(Attempt.flagged.is_(True))
+    per_exam_counts = {exam_key: count for exam_key, count in db.execute(count_query).all()}
+    total_attempt_count = sum(per_exam_counts.values())
+
+    exams = db.scalars(select(Exam).order_by(desc(Exam.id))).all()
+
     return templates.TemplateResponse(
         request,
         "admin/attempts.html",
-        {"attempts": db.scalars(query).all(), "flagged_only": bool(flagged)},
+        {
+            "attempts": db.scalars(query).all(),
+            "flagged_only": bool(flagged),
+            "exams": exams,
+            "per_exam_counts": per_exam_counts,
+            "total_attempt_count": total_attempt_count,
+            "current_exam_id": selected_exam.id if selected_exam is not None else None,
+        },
     )
 
 
@@ -728,7 +1279,11 @@ def attempt_detail(
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.id == attempt_id)
-        .options(joinedload(Attempt.student), joinedload(Attempt.exam))
+        .options(
+            joinedload(Attempt.student),
+            joinedload(Attempt.exam),
+            selectinload(Attempt.audit_events),
+        )
     )
     
     if attempt is None:
@@ -743,6 +1298,9 @@ def attempt_detail(
             "questions": questions,
             "answers": answers,
             "remaining": proctor.remaining_seconds(attempt),
+            "audit_events": sorted(
+                list(attempt.audit_events), key=lambda event: event.id, reverse=True
+            )[:25],
         },
     )
 

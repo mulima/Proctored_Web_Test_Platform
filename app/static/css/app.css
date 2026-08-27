@@ -253,6 +253,15 @@ body.blanked #paperShield { display: block; position: fixed; inset: 0; z-index: 
   padding: 13px 24px; border-radius: 5px; cursor: pointer;
 }
 .overlay button:disabled { background: #4a5568; }
+.review-overlay { overflow-y: auto; align-items: flex-start; }
+.review-panel { width: min(900px, 100%); margin: 20px auto; text-align: left; }
+.review-panel h1 { color: var(--orange); }
+.review-meta { border-collapse: collapse; width: 100%; margin: 12px 0 24px; }
+.review-meta td { border: 1px solid #596579; padding: 6px 8px; }
+.review-meta td:first-child { font-weight: 700; width: 180px; }
+.review-section { border-top: 1px solid #596579; padding-top: 12px; margin-top: 18px; }
+.review-answer { white-space: pre-wrap; background: rgba(255,255,255,.08); padding: 8px; margin: 6px 0 12px; }
+.review-actions { display: flex; justify-content: flex-end; gap: 10px; flex-wrap: wrap; border-top: 1px solid #596579; margin-top: 24px; padding-top: 12px; }
 
 /* ------------------------------------------------------------------- admin panel */
 

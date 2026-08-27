@@ -4,6 +4,15 @@
 <p class="muted">{{ attempt.student.computer_number }} &middot; {{ attempt.student.email }}
   &middot; {{ attempt.exam.title }}</p>
 
+{% if request.query_params.get('regen') %}
+<div class="notice">Submission PDF regenerated from current records.</div>{% endif %}
+{% if request.query_params.get('reviewed') %}
+<div class="notice">Submission marked as reviewed.</div>{% endif %}
+{% if request.query_params.get('cmp') == 'match' %}
+<div class="notice">Stored PDF matches current records.</div>{% endif %}
+{% if request.query_params.get('cmp') == 'mismatch' %}
+<div class="warnbox"><strong>Stored PDF mismatch:</strong> current records now render a different PDF.</div>{% endif %}
+
 {% if attempt.flagged %}
 <div class="warnbox"><strong>This attempt is flagged for review.</strong>
 <p class="muted">{{ attempt.strike_count }} incident(s) counted. A flag is a prompt to look,
@@ -28,6 +37,67 @@ read alongside your own invigilation notes.</p></div>
   {% if attempt.pdf_bytes %}
   <a class="button primary" href="{{ course_url('/admin/attempts/' ~ attempt.id ~ '/pdf') }}" target="_blank">Open submission PDF</a>
   {% endif %}
+</section>
+
+<section class="card">
+  <h2>Review workflow</h2>
+  <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px">
+    <form method="post" action="{{ course_url('/admin/attempts/' ~ attempt.id ~ '/regenerate-pdf') }}"
+          onsubmit="return confirm('Regenerate the stored PDF for this submission?');">
+      <button type="submit" class="button">Regenerate PDF</button>
+    </form>
+    <form method="post" action="{{ course_url('/admin/attempts/' ~ attempt.id ~ '/compare-pdf') }}">
+      <button type="submit" class="button">Compare Stored PDF With Current Records</button>
+    </form>
+    <a class="button" href="{{ course_url('/admin/attempts/' ~ attempt.id ~ '/audit-report') }}">Download audit report</a>
+  </div>
+
+  <form method="post" action="{{ course_url('/admin/attempts/' ~ attempt.id ~ '/mark-reviewed') }}">
+    <label>Review notes
+      <textarea name="review_notes" style="min-height:90px" placeholder="Optional review notes for this submission">{{ attempt.review_notes or '' }}</textarea>
+    </label>
+    <button type="submit" class="primary">Mark submission as reviewed</button>
+  </form>
+
+  <p class="muted" style="margin-top:10px">
+    {% if attempt.reviewed_at %}
+      Reviewed {{ attempt.reviewed_at.strftime('%d %b %Y %H:%M:%S') }} UTC by {{ attempt.reviewed_by or 'unknown' }}.
+    {% else %}
+      Not yet marked as reviewed.
+    {% endif %}
+  </p>
+
+  {% if attempt.last_pdf_audit_at %}
+  <p class="muted">
+    Last PDF comparison {{ attempt.last_pdf_audit_at.strftime('%d %b %Y %H:%M:%S') }} UTC:
+    {% if attempt.last_pdf_audit_match %}
+      <strong>match</strong>
+    {% else %}
+      <strong>mismatch</strong>
+    {% endif %}
+    <br>
+    Stored hash: {{ attempt.last_pdf_audit_stored_sha256 or '-' }}<br>
+    Current hash: {{ attempt.last_pdf_audit_current_sha256 or '-' }}
+  </p>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Regeneration and review history</h2>
+  {% if audit_events %}
+  <div class="scroll"><table>
+    <tr><th>When (UTC)</th><th>Action</th><th>Status</th><th>Actor</th><th>Message</th></tr>
+    {% for event in audit_events %}
+    <tr>
+      <td class="muted">{{ event.at.strftime('%d %b %H:%M:%S') if event.at else '' }}</td>
+      <td>{{ event.action }}</td>
+      <td>{% if event.status == 'warning' %}<span class="chip bad">warning</span>{% else %}<span class="chip ok">{{ event.status }}</span>{% endif %}</td>
+      <td class="muted">{{ event.actor or '-' }}</td>
+      <td class="muted">{{ event.message }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No workflow actions recorded yet.</p>{% endif %}
 </section>
 
 {% if attempt.snapshots %}

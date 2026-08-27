@@ -17,6 +17,8 @@
 <div class="notice">Imported {{ request.query_params.get('imported') }} question(s).</div>{% endif %}
 {% if request.query_params.get('regenerated') %}
 <div class="notice">Regenerated {{ request.query_params.get('regenerated') }} submission PDF(s) from the database.</div>{% endif %}
+{% if request.query_params.get('error') == 'regeneration' %}
+<ul class="errors"><li>PDF regeneration failed. No partial regeneration was saved; check the application alerts.</li></ul>{% endif %}
 
 <section class="card">
   <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/open') }}">
@@ -39,6 +41,8 @@
     <label>Total marks<input type="number" name="total_marks" value="{{ exam.total_marks }}"></label>
     <label>Section C questions to choose<input type="number" name="section_c_required" value="{{ exam.section_c_required }}" min="0"></label>
     <label>Instructions to candidates<textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
+    <label><input type="checkbox" name="show_submission_pdf" value="1"{% if exam.show_submission_pdf %} checked{% endif %}>
+      Allow students to open their submission PDF</label>
     <button class="primary" type="submit">Save settings</button>
   </form>
 </section>
@@ -51,6 +55,13 @@
         onsubmit="return confirm('Replace every stored submission PDF for this exam?');">
     <button class="danger" type="submit">Regenerate all submission PDFs</button>
   </form>
+  <p class="muted" style="margin-top:10px">Download every submitted script PDF for this exam as one ZIP file.</p>
+  <a class="button" href="{{ course_url('/admin/exams/' ~ exam.id ~ '/submission-pdfs.zip') }}">Download all submission PDFs (ZIP)</a>
+  <p class="muted" style="margin-top:10px">Download one consolidated audit across all attempts for this exam.</p>
+  <div style="display:flex; gap:8px; flex-wrap:wrap">
+    <a class="button" href="{{ course_url('/admin/exams/' ~ exam.id ~ '/audit-report.json') }}">Download exam audit (JSON)</a>
+    <a class="button" href="{{ course_url('/admin/exams/' ~ exam.id ~ '/audit-report.csv') }}">Download exam audit (CSV)</a>
+  </div>
 </section>
 
 {% for letter, name in [('A','Section A: multiple choice'),('B','Section B: short answer'),('C','Section C: long writeup')] %}

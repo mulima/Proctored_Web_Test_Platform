@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from app.config import normalise_database_url, settings
 from app.models_course import CourseBase
 from app.models_platform import Lecturer
+from app.monitoring import notify_operator
 from app.tenant_crypto import decrypt
 
 _engines: dict[int, Engine] = {}
@@ -128,9 +129,29 @@ def course_session(lecturer: Lecturer) -> Iterator[Session]:
         session.commit()
     except Exception:
         session.rollback()
+        notify_operator("ClearGrade alert: COURSE_DATABASE_FAILURE", f"A course database request failed for lecturer {lecturer.id}. Check application logs for the exception.")
         raise
     finally:
         session.close()
+
+
+def probe_course_connection(lecturer: Lecturer) -> str | None:
+    """Returns None when the lecturer's configured course database is reachable,
+    otherwise a short human-readable error string.
+    """
+    try:
+        factory = _sessionmaker_for(lecturer)
+        session = factory()
+        try:
+            session.execute(text("SELECT 1"))
+        finally:
+            session.close()
+        return None
+    except Exception as exc:
+        # Drop potentially stale engine/sessionmaker so a repaired configuration
+        # takes effect immediately on the next request.
+        forget(lecturer.id)
+        return f"{type(exc).__name__}: {str(exc)[:300]}"
 
 
 def forget(lecturer_id: int) -> None:

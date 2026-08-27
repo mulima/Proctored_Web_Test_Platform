@@ -32,6 +32,17 @@
   </div>
 </div>
 
+<div id="reviewOverlay" class="overlay review-overlay" aria-hidden="true">
+  <div class="panel review-panel">
+    <div id="reviewContent"></div>
+    <div class="review-actions">
+      <button type="button" onclick="MBS.closeReview()">Return to answers</button>
+      <button id="reviewSubmit" class="primary" type="button" onclick="MBS.submitReview()">
+        Submit final paper</button>
+    </div>
+  </div>
+</div>
+
 <header class="exam-header">
   <div class="row">
     <div>
@@ -62,6 +73,7 @@
   </div>
   <div class="group">
     <button type="button" onclick="MBS.enterFullscreen()">Restore full screen</button>
+    <button type="button" onclick="MBS.review()">Review final paper</button>
     <button id="submitBtn" class="primary" type="button" onclick="MBS.manualSubmit()">
       Submit final paper</button>
   </div>

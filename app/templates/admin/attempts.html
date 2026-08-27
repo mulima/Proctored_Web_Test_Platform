@@ -1,10 +1,25 @@
 {% extends "admin/_base.html" %}
 {% block admin_content %}
 <h1>{% if flagged_only %}Flagged submissions{% else %}Submissions{% endif %}</h1>
+
+<section class="card" style="padding:10px 12px">
+  <div style="display:flex; gap:8px; flex-wrap:wrap">
+    <a class="button{% if current_exam_id is none %} primary{% endif %}" href="{{ course_url('/admin/attempts') }}{% if flagged_only %}?flagged=1{% endif %}">
+      All exams ({{ total_attempt_count }})
+    </a>
+    {% for exam in exams %}
+      {% set exam_count = per_exam_counts.get(exam.id, 0) %}
+      <a class="button{% if current_exam_id == exam.id %} primary{% endif %}" href="{{ course_url('/admin/attempts?exam_id=' ~ exam.id ~ (flagged_only and '&flagged=1' or '')) }}">
+        {{ exam.title }} ({{ exam_count }})
+      </a>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="card">
   <div class="scroll"><table>
     <tr><th>Computer no.</th><th>Student</th><th>Exam</th><th>Started</th><th>Submitted</th>
-        <th>Incidents</th><th>Snapshots</th><th></th></tr>
+        <th>Review</th><th>Incidents</th><th>Snapshots</th><th></th></tr>
     {% for attempt in attempts %}
     <tr class="{% if attempt.flagged %}flagged{% endif %}">
       <td>{{ attempt.student.computer_number }}</td>
@@ -13,11 +28,18 @@
       <td class="muted">{{ attempt.started_at.strftime('%d %b %H:%M') }}</td>
       <td class="muted">{% if attempt.submitted_at %}{{ attempt.submitted_at.strftime('%d %b %H:%M') }}
           {% else %}<em>in progress</em>{% endif %}</td>
+      <td>
+        {% if attempt.reviewed_at %}
+          <span class="chip ok">reviewed</span>
+        {% else %}
+          <span class="chip">pending</span>
+        {% endif %}
+      </td>
       <td>{{ attempt.strike_count }}{% if attempt.flagged %} <span class="chip bad">FLAGGED</span>{% endif %}</td>
       <td>{{ attempt.snapshots|length }}</td>
       <td><a href="{{ course_url('/admin/attempts/' ~ attempt.id) }}">Open</a></td>
     </tr>
-    {% else %}<tr><td colspan="8" class="muted">Nothing here.</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="9" class="muted">Nothing here.</td></tr>{% endfor %}
   </table></div>
 </section>
 {% endblock %}

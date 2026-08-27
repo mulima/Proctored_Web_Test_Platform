@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     smtp_password: str = ""
     smtp_use_tls: bool = True
     resend_api_key: str = ""
+    alert_email: str = ""
+    alert_threshold: int = 5
+    alert_window_minutes: int = 10
 
     # --- proctoring ---------------------------------------------------------
     absence_warn_seconds: int = 20

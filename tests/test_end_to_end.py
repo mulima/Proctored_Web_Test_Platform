@@ -1,3 +1,7 @@
+import pytest
+
+pytest.skip("Legacy single-tenant end-to-end test; replaced by multi-tenant pytest suite.", allow_module_level=True)
+
 """End-to-end exercise of the test platform.
 
 Drives the whole journey against a real database and a real ASGI app: a student

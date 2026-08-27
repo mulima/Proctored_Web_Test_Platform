@@ -27,6 +27,7 @@ def run_migrations_offline() -> None:
     context.configure(
         url=settings.sqlalchemy_url,
         target_metadata=target_metadata,
+        version_table="alembic_version_platform",
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
         compare_type=True,
@@ -45,6 +46,7 @@ def run_migrations_online() -> None:
         context.configure(
             connection=connection,
             target_metadata=target_metadata,
+            version_table="alembic_version_platform",
             compare_type=True,
             render_as_batch=connection.dialect.name == "sqlite",
         )

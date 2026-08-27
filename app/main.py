@@ -24,6 +24,7 @@ from app.config import settings
 from app.db import SessionLocal, engine, get_db
 from app.deps import templates
 from app.mailer import Message, send
+from app.monitoring import notify_operator
 from app.models_platform import Lecturer
 from app.routers import admin as admin_router
 from app.routers import auth as auth_router
@@ -120,6 +121,10 @@ async def security_headers(request: Request, call_next):
     response.headers.setdefault("X-Content-Type-Options", "nosniff")
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers.setdefault("Referrer-Policy", "same-origin")
+    if not request.url.path.startswith(("/static/", "/docs/")):
+        response.headers.setdefault("Cache-Control", "no-store, private")
+        response.headers.setdefault("Pragma", "no-cache")
+        response.headers.setdefault("Vary", "Cookie")
     return response
 
 
@@ -151,6 +156,7 @@ def healthz():
             db.execute(select(1))
         return {"ok": True}
     except Exception as exc:
+        notify_operator("ClearGrade alert: PLATFORM_DATABASE_FAILURE", "The health check could not reach the platform database.")
         return {"ok": False, "error": str(exc)[:200]}
 
 

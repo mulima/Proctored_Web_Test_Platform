@@ -85,6 +85,8 @@ class Exam(CourseBase):
     section_c_required: Mapped[int] = mapped_column(Integer, default=2)
     # Nothing can be sat until an admin opens it. This is the release switch.
     is_open: Mapped[bool] = mapped_column(Boolean, default=False)
+    # Existing exams remain visible to students; lecturers can disable this per exam.
+    show_submission_pdf: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
     questions: Mapped[list["Question"]] = relationship(
@@ -138,6 +140,16 @@ class Attempt(CourseBase):
     pdf_filename: Mapped[str] = mapped_column(String(300), default="")
     pdf_bytes: Mapped[bytes | None] = mapped_column(LargeBinary, nullable=True)
 
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    reviewed_by: Mapped[str] = mapped_column(String(255), default="")
+    review_notes: Mapped[str] = mapped_column(Text, default="")
+
+    last_pdf_audit_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    last_pdf_audit_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    last_pdf_audit_stored_sha256: Mapped[str] = mapped_column(String(64), default="")
+    last_pdf_audit_current_sha256: Mapped[str] = mapped_column(String(64), default="")
+    last_pdf_audit_message: Mapped[str] = mapped_column(Text, default="")
+
     exam: Mapped[Exam] = relationship(back_populates="attempts")
     student: Mapped[Student] = relationship(back_populates="attempts")
     answers: Mapped[list["Answer"]] = relationship(
@@ -148,6 +160,9 @@ class Attempt(CourseBase):
     )
     snapshots: Mapped[list["Snapshot"]] = relationship(
         back_populates="attempt", cascade="all, delete-orphan", order_by="Snapshot.captured_at"
+    )
+    audit_events: Mapped[list["SubmissionAuditEvent"]] = relationship(
+        back_populates="attempt", cascade="all, delete-orphan", order_by="SubmissionAuditEvent.at"
     )
 
     # One sitting per student per exam. The database, not the client, enforces this.
@@ -233,3 +248,27 @@ class AppLog(CourseBase):
     ip: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(400), default="")
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class SubmissionAuditEvent(CourseBase):
+    __tablename__ = "submission_audit_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("attempts.id", ondelete="CASCADE"), index=True
+    )
+    exam_id: Mapped[int] = mapped_column(ForeignKey("exams.id", ondelete="CASCADE"), index=True)
+    action: Mapped[str] = mapped_column(String(30), index=True)  # regenerate | compare | review
+    status: Mapped[str] = mapped_column(String(20), default="ok", index=True)
+    actor: Mapped[str] = mapped_column(String(255), default="")
+    at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+
+    stored_pdf_sha256: Mapped[str] = mapped_column(String(64), default="")
+    current_pdf_sha256: Mapped[str] = mapped_column(String(64), default="")
+    is_match: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+
+    message: Mapped[str] = mapped_column(Text, default="")
+    payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    attempt: Mapped[Attempt] = relationship(back_populates="audit_events")
+    exam: Mapped[Exam] = relationship()
