@@ -402,14 +402,34 @@ def setup_email(
 
     course.mail_backend = mail_backend
     course.mail_from = mail_from.strip()
-    course.smtp_host = smtp_host.strip()
-    course.smtp_port = int(smtp_port) if smtp_port.strip().isdigit() else None
-    course.smtp_username = smtp_username.strip()
-    course.smtp_use_tls = bool(smtp_use_tls)
-    if smtp_password.strip():
-        course.smtp_password_encrypted = encrypt(smtp_password.strip())
-    if resend_api_key.strip():
-        course.resend_api_key_encrypted = encrypt(resend_api_key.strip())
+
+    if mail_backend == "smtp":
+        course.smtp_host = smtp_host.strip()
+        course.smtp_port = int(smtp_port) if smtp_port.strip().isdigit() else None
+        course.smtp_username = smtp_username.strip()
+        course.smtp_use_tls = bool(smtp_use_tls)
+        if smtp_password.strip():
+            course.smtp_password_encrypted = encrypt(smtp_password.strip())
+    else:
+        # Not using this course's own SMTP - clear it out rather than leaving stale
+        # values sitting in the row. resolve() (app/mailer.py) already treats a blank
+        # mail_backend as "use the platform's", but a non-empty smtp_host left behind
+        # from an earlier choice is enough to make it think this course still wants
+        # its own SMTP, silently shadowing the platform's real credentials. Emptying
+        # these fields here is what actually makes "use the platform's default" mean
+        # that, not just show that in the form.
+        course.smtp_host = ""
+        course.smtp_port = None
+        course.smtp_username = ""
+        course.smtp_password_encrypted = None
+        course.smtp_use_tls = True
+
+    if mail_backend == "resend":
+        if resend_api_key.strip():
+            course.resend_api_key_encrypted = encrypt(resend_api_key.strip())
+    else:
+        course.resend_api_key_encrypted = None
+
     platform_db.commit()
     logging_service.record_platform(
         platform_db, "LECTURER_EMAIL_UPDATED", course.slug, lecturer_id=admin.id, request=request

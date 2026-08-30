@@ -58,33 +58,46 @@
   (currently: whatever the platform operator configured, or a console-only log if they
   configured nothing). Set these only if you want verification links and alert emails for
   <em>your</em> course to send from your own account or a different provider.</p>
-  <form method="post" action="{{ course_url('/admin/setup/email') }}">
+  <form method="post" action="{{ course_url('/admin/setup/email') }}" id="emailSetupForm">
     <label>Backend
-      <select name="mail_backend">
+      <select name="mail_backend" id="mailBackendSelect" onchange="mbsToggleMailFields(this.value)">
         <option value="" {% if not lecturer.mail_backend %}selected{% endif %}>Use the platform's default</option>
         <option value="console" {% if lecturer.mail_backend == 'console' %}selected{% endif %}>Console (log only, no real delivery)</option>
         <option value="smtp" {% if lecturer.mail_backend == 'smtp' %}selected{% endif %}>SMTP</option>
         <option value="resend" {% if lecturer.mail_backend == 'resend' %}selected{% endif %}>Resend</option>
-      </select></label>
+      </select>
+      <span class="hint">"Use the platform's default" ignores everything below - the fields
+      only apply once you pick SMTP or Resend here.</span></label>
     <label>From address<input name="mail_from" value="{{ lecturer.mail_from }}" placeholder="MBS6011 <no-reply@yourdomain.example>"></label>
 
-    <h3>SMTP</h3>
-    <label>Host<input name="smtp_host" value="{{ lecturer.smtp_host }}" placeholder="smtp.gmail.com"></label>
-    <label>Port<input type="number" name="smtp_port" value="{{ lecturer.smtp_port or '' }}" placeholder="587"></label>
-    <label>Username<input name="smtp_username" value="{{ lecturer.smtp_username }}"></label>
-    <label>Password
-      <input type="password" name="smtp_password" autocomplete="off"
-        placeholder="{% if has_smtp_password %}(unchanged - leave blank to keep it){% else %}a Gmail app password, not your login password{% endif %}">
-      <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
-    <label><input type="checkbox" name="smtp_use_tls" value="1" {% if lecturer.smtp_use_tls %}checked{% endif %}> Use STARTTLS</label>
+    <div id="smtpFields">
+      <h3>SMTP</h3>
+      <label>Host<input name="smtp_host" value="{{ lecturer.smtp_host }}" placeholder="smtp.gmail.com"></label>
+      <label>Port<input type="number" name="smtp_port" value="{{ lecturer.smtp_port or '' }}" placeholder="587"></label>
+      <label>Username<input name="smtp_username" value="{{ lecturer.smtp_username }}"></label>
+      <label>Password
+        <input type="password" name="smtp_password" autocomplete="off"
+          placeholder="{% if has_smtp_password %}(unchanged - leave blank to keep it){% else %}a Gmail app password, not your login password{% endif %}">
+        <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
+      <label><input type="checkbox" name="smtp_use_tls" value="1" {% if lecturer.smtp_use_tls %}checked{% endif %}> Use STARTTLS</label>
+    </div>
 
-    <h3>Resend</h3>
-    <label>API key
-      <input type="password" name="resend_api_key" autocomplete="off"
-        placeholder="{% if has_resend_key %}(unchanged - leave blank to keep it){% else %}re_...{% endif %}">
-      <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
+    <div id="resendFields">
+      <h3>Resend</h3>
+      <label>API key
+        <input type="password" name="resend_api_key" autocomplete="off"
+          placeholder="{% if has_resend_key %}(unchanged - leave blank to keep it){% else %}re_...{% endif %}">
+        <span class="hint">Stored encrypted. Never shown back once saved.</span></label>
+    </div>
 
     <button class="primary" type="submit">Save email settings</button>
   </form>
 </section>
+<script>
+  function mbsToggleMailFields(backend) {
+    document.getElementById('smtpFields').hidden = backend !== 'smtp';
+    document.getElementById('resendFields').hidden = backend !== 'resend';
+  }
+  mbsToggleMailFields(document.getElementById('mailBackendSelect').value);
+</script>
 {% endblock %}
