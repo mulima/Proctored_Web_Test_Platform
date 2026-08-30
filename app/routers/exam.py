@@ -19,8 +19,20 @@ from app.security import deadline_from
 router = APIRouter()
 
 
-def _open_exam(db: Session) -> Exam | None:
-    return db.scalar(select(Exam).where(Exam.is_open.is_(True)).order_by(Exam.id.desc()))
+def _open_exam(db: Session, course: Course) -> Exam | None:
+    # EMERGENCY ISOLATION GUARD, not a substitute for real per-course database
+    # isolation: right now more than one course can end up sharing the same
+    # physical `exams` table (a course provisioned in "platform" storage mode
+    # whose own schema never actually got created falls through to the shared
+    # `public` schema - see app/tenant_db.py). Filtering by exam.code here stops
+    # one course's students from being shown or joining another course's open
+    # exam while that underlying isolation bug is fixed and the data separated.
+    # Once every course's database is genuinely its own, this filter is a no-op.
+    return db.scalar(
+        select(Exam)
+        .where(Exam.is_open.is_(True), Exam.code == course.course_code)
+        .order_by(Exam.id.desc())
+    )
 
 
 def _answers_map(db: Session, attempt: Attempt) -> dict[int, Answer]:
@@ -38,7 +50,7 @@ def dashboard(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    exam = _open_exam(db)
+    exam = _open_exam(db, course)
     attempt = None
     if exam:
         attempt = db.scalar(
@@ -60,7 +72,7 @@ def start(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    exam = _open_exam(db)
+    exam = _open_exam(db, course)
     if exam is None:
         return RedirectResponse(f"/{course.slug}/", status_code=303)
 
@@ -100,7 +112,7 @@ def sit(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    exam = _open_exam(db)
+    exam = _open_exam(db, course)
     if exam is None:
         return RedirectResponse(f"/{course.slug}/", status_code=303)
     attempt = db.scalar(
@@ -152,7 +164,7 @@ def save(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = _live_attempt(db, student)
+    attempt = _live_attempt(db, student, course)
     if attempt is None:
         return JSONResponse({"error": "No live attempt."}, status_code=409)
     if attempt.is_locked:
@@ -191,7 +203,7 @@ def status(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = _live_attempt(db, student)
+    attempt = _live_attempt(db, student, course)
     if attempt is None:
         return JSONResponse({"error": "No live attempt."}, status_code=409)
     proctor.touch(attempt)
@@ -207,7 +219,7 @@ def incident(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = _live_attempt(db, student)
+    attempt = _live_attempt(db, student, course)
     if attempt is None:
         return JSONResponse({"error": "No live attempt."}, status_code=409)
     if attempt.is_locked:
@@ -249,7 +261,7 @@ def submit(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = _live_attempt(db, student)
+    attempt = _live_attempt(db, student, course)
     if attempt is None:
         return JSONResponse({"error": "No live attempt."}, status_code=409)
     if attempt.is_locked:
@@ -337,7 +349,7 @@ def review(
     course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    attempt = _live_attempt(db, student)
+    attempt = _live_attempt(db, student, course)
     if attempt is None:
         return HTMLResponse("No live attempt.", status_code=409)
     if proctor.is_expired(attempt):
@@ -410,8 +422,8 @@ def my_submission(
 # --------------------------------------------------------------------------- helpers
 
 
-def _live_attempt(db: Session, student: Student) -> Attempt | None:
-    exam = _open_exam(db)
+def _live_attempt(db: Session, student: Student, course: Course) -> Attempt | None:
+    exam = _open_exam(db, course)
     if exam is None:
         return None
     return db.scalar(

@@ -1025,8 +1025,15 @@ def toggle_open(
             return RedirectResponse(
                 f"/{course.slug}/admin/exams/{exam_id}?error=empty", status_code=303
             )
-        # Only one exam is live at a time; the sitting page always takes the open one.
-        for other in db.scalars(select(Exam).where(Exam.is_open.is_(True))).all():
+        # Only one exam per course is live at a time; the sitting page always takes
+        # the open one. EMERGENCY GUARD: also scoped to this course's own code -
+        # right now more than one course can share the same physical exams table
+        # (see the isolation bug noted in app/routers/exam.py's _open_exam), and
+        # without this filter opening an exam here would silently close another
+        # course's already-open, possibly actively-being-sat exam too.
+        for other in db.scalars(
+            select(Exam).where(Exam.is_open.is_(True), Exam.code == course.course_code)
+        ).all():
             other.is_open = False
     exam.is_open = not exam.is_open
     db.commit()
