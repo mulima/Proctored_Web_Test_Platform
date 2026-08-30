@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block nav %}<a href="{{ course_url('/admin') }}">Admin</a><a href="{{ course_url('/logout') }}">Sign out</a>{% endblock %}
+{% block nav %}<a href="/admin/courses">My courses</a><a href="{{ course_url('/admin') }}">Admin</a><a href="/logout">Sign out</a>{% endblock %}
 {% block content %}
 <div class="admin-nav">
   <a href="{{ course_url('/admin') }}">Overview</a>
@@ -9,6 +9,7 @@
   <a href="{{ course_url('/admin/json-guide') }}">JSON Guide</a>
   <a href="{{ course_url('/admin/logs') }}">Logs</a>
   <a href="{{ course_url('/admin/setup') }}">Setup</a>
+  <a href="/admin/courses">My courses</a>
 </div>
 {% block admin_content %}{% endblock %}
 {% endblock %}

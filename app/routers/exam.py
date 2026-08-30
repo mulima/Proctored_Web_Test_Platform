@@ -13,7 +13,7 @@ from app.config import settings
 from app.deps import get_course_db, require_course_ready, require_student, templates
 from app.mailer import Attachment, Message, send
 from app.models_course import Answer, Attempt, Exam, Question, Snapshot, Student
-from app.models_platform import Lecturer
+from app.models_platform import Course
 from app.security import deadline_from
 
 router = APIRouter()
@@ -35,7 +35,7 @@ def _questions(exam: Exam) -> list[Question]:
 def dashboard(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = _open_exam(db)
@@ -57,12 +57,12 @@ def dashboard(
 def start(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = _open_exam(db)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/", status_code=303)
+        return RedirectResponse(f"/{course.slug}/", status_code=303)
 
     attempt = db.scalar(
         select(Attempt).where(Attempt.exam_id == exam.id, Attempt.student_id == student.id)
@@ -90,26 +90,26 @@ def start(
         proctor.record_incident(
             db, attempt, "RECONNECTED", "The test page was reopened.", source="browser"
         )
-    return RedirectResponse(f"/{lecturer.slug}/sit", status_code=303)
+    return RedirectResponse(f"/{course.slug}/sit", status_code=303)
 
 
 @router.get("/sit", response_class=HTMLResponse)
 def sit(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = _open_exam(db)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/", status_code=303)
+        return RedirectResponse(f"/{course.slug}/", status_code=303)
     attempt = db.scalar(
         select(Attempt).where(Attempt.exam_id == exam.id, Attempt.student_id == student.id)
     )
     if attempt is None:
-        return RedirectResponse(f"/{lecturer.slug}/", status_code=303)
+        return RedirectResponse(f"/{course.slug}/", status_code=303)
     if attempt.is_locked:
-        return RedirectResponse(f"/{lecturer.slug}/submitted", status_code=303)
+        return RedirectResponse(f"/{course.slug}/submitted", status_code=303)
 
     proctor.touch(attempt)
     db.commit()
@@ -149,7 +149,7 @@ def save(
     request: Request,
     body: dict = Body(...),
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = _live_attempt(db, student)
@@ -188,7 +188,7 @@ def save(
 def status(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = _live_attempt(db, student)
@@ -204,7 +204,7 @@ def incident(
     request: Request,
     body: dict = Body(...),
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = _live_attempt(db, student)
@@ -236,7 +236,7 @@ def incident(
     if snapshot is not None and proctor.should_email_alert(attempt, category):
         attempt.last_alert_email_at = datetime.utcnow()
         db.commit()
-        _email_alert(db, attempt, entry, snapshot, lecturer)
+        _email_alert(db, attempt, entry, snapshot, course)
 
     return {"ok": True, **proctor.status_payload(attempt)}
 
@@ -246,7 +246,7 @@ def submit(
     request: Request,
     body: dict = Body(default={}),
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = _live_attempt(db, student)
@@ -301,9 +301,9 @@ def submit(
         )
     )
 
-    document = pdf.build(attempt, _answers_map(db, attempt), lecturer)
+    document = pdf.build(attempt, _answers_map(db, attempt), course)
     attempt.pdf_bytes = document
-    attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+    attempt.pdf_filename = pdf.filename_for(attempt, course)
     db.commit()
 
     if not attempt.pdf_bytes:
@@ -326,15 +326,15 @@ def submit(
         request=request,
         payload={"strikes": attempt.strike_count, "flagged": attempt.flagged},
     )
-    _email_submission(db, attempt, document, lecturer)
-    return {"ok": True, "locked": True, "redirect": f"/{lecturer.slug}/submitted"}
+    _email_submission(db, attempt, document, course)
+    return {"ok": True, "locked": True, "redirect": f"/{course.slug}/submitted"}
 
 
 @router.get("/api/review", response_class=HTMLResponse)
 def review(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = _live_attempt(db, student)
@@ -372,12 +372,11 @@ def review(
 def submitted(
     request: Request,
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    # SECURITY FIX: Order by submitted_at DESC (most recent) instead of ID DESC
-    # This ensures we show the MOST RECENT submission, not just the highest ID
-    # Prevents showing wrong exam's submission if student has multiple submitted attempts
+    # Most recent submission, not just the highest id - prevents showing the wrong
+    # exam's submission if a student has multiple submitted attempts.
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.student_id == student.id, Attempt.is_locked.is_(True))
@@ -391,12 +390,9 @@ def submitted(
 @router.get("/my-submission.pdf")
 def my_submission(
     student: Student = Depends(require_student),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    # SECURITY FIX: Order by submitted_at DESC (most recent) instead of ID DESC
-    # This ensures we serve the MOST RECENT submission, not just the highest ID
-    # Prevents serving wrong exam's PDF if student has multiple submitted attempts
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.student_id == student.id, Attempt.is_locked.is_(True))
@@ -463,7 +459,7 @@ def _student_block(attempt: Attempt) -> str:
 
 
 def _email_alert(
-    db: Session, attempt: Attempt, incident, snapshot: Snapshot, lecturer: Lecturer
+    db: Session, attempt: Attempt, incident, snapshot: Snapshot, course: Course
 ) -> None:
     minutes, seconds = divmod(int(incident.elapsed_seconds or 0), 60)
     verdict_line = {
@@ -473,7 +469,7 @@ def _email_alert(
     }.get(snapshot.server_verdict, "")
 
     body = (
-        f"A proctoring incident was recorded during {lecturer.brand}.\n\n"
+        f"A proctoring incident was recorded during {course.brand}.\n\n"
         f"{_student_block(attempt)}"
         f"\nIncident:         {incident.label}\n"
         f"At:               {incident.occurred_at.strftime('%Y-%m-%d %H:%M:%S')} UTC "
@@ -485,13 +481,13 @@ def _email_alert(
         "The evidence snapshot is attached. A recorded incident is a prompt to look, not a\n"
         "finding of misconduct - cameras misread ordinary movement. Further alerts for this\n"
         f"candidate are held for {settings.snapshot_alert_min_interval_seconds // 60} minutes.\n\n"
-        f"Review the full log: {settings.base_url.rstrip('/')}/{lecturer.slug}/admin/attempts/{attempt.id}\n"
+        f"Review the full log: {settings.base_url.rstrip('/')}/{course.slug}/admin/attempts/{attempt.id}\n"
     )
     delivered = send(
         Message(
-            to=lecturer.email,
+            to=course.email,
             subject=(
-                f"[{lecturer.brand}] {incident.label} - "
+                f"[{course.brand}] {incident.label} - "
                 f"{attempt.student.computer_number} {attempt.student.full_name}"
             ),
             body=body,
@@ -503,7 +499,7 @@ def _email_alert(
                 )
             ],
         ),
-        lecturer,
+        course,
     )
     logging_service.record(
         db,
@@ -515,7 +511,7 @@ def _email_alert(
     )
 
 
-def _email_submission(db: Session, attempt: Attempt, document: bytes, lecturer: Lecturer) -> None:
+def _email_submission(db: Session, attempt: Attempt, document: bytes, course: Course) -> None:
     incidents = list(attempt.incidents)
     counted = sum(1 for incident in incidents if incident.counted)
     lines = [
@@ -528,7 +524,7 @@ def _email_submission(db: Session, attempt: Attempt, document: bytes, lecturer: 
         log_text += f"\n  ... and {len(incidents) - 40} more, see the admin panel"
 
     body = (
-        f"A submission has been received for {lecturer.brand}.\n\n"
+        f"A submission has been received for {course.brand}.\n\n"
         f"{_student_block(attempt)}"
         f"Submitted:        {attempt.submitted_at.strftime('%Y-%m-%d %H:%M:%S')} UTC\n"
         f"Submission mode:  {attempt.submission_mode}\n"
@@ -538,25 +534,25 @@ def _email_submission(db: Session, attempt: Attempt, document: bytes, lecturer: 
         f"Snapshots:        {len(attempt.snapshots)}\n\n"
         "Incident log:\n"
         f"{log_text}\n\n"
-        f"Full record: {settings.base_url.rstrip('/')}/{lecturer.slug}/admin/attempts/{attempt.id}\n"
+        f"Full record: {settings.base_url.rstrip('/')}/{course.slug}/admin/attempts/{attempt.id}\n"
     )
     delivered = send(
         Message(
-            to=lecturer.email,
+            to=course.email,
             subject=(
-                f"[{lecturer.brand}] Submission - "
+                f"[{course.brand}] Submission - "
                 f"{attempt.student.computer_number} {attempt.student.full_name}"
                 f"{' - FLAGGED' if attempt.flagged else ''}"
             ),
             body=body,
             attachments=[Attachment(filename=attempt.pdf_filename, content=document)],
         ),
-        lecturer,
+        course,
     )
     logging_service.record(
         db,
         "SUBMISSION_EMAIL_SENT" if delivered else "SUBMISSION_EMAIL_FAILED",
-        f"Submission PDF for {attempt.student.computer_number} to {lecturer.email}",
+        f"Submission PDF for {attempt.student.computer_number} to {course.email}",
         level="INFO" if delivered else "ERROR",
         student_id=attempt.student_id,
         attempt_id=attempt.id,

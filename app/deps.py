@@ -2,10 +2,12 @@
 within it, and the templating environment.
 
 Every course-scoped route lives under /{slug}/..., and almost everything here exists
-to turn that one path segment into (a) the right Lecturer row from the platform
-database, (b) a Session bound to THAT lecturer's own database, and (c) session-cookie
-checks that reject a cookie issued for a different slug - a bare numeric id in a
-cookie means nothing on its own once there are many lecturers' databases in play.
+to turn that one path segment into (a) the right Course row, (b) a Session bound to
+THAT course's own database, and (c) session-cookie checks appropriate to who's
+signing in - a student's session is still tied to one specific course (see
+set_session_cookie in app/security.py); a lecturer's session is tied to their
+*account*, which may own several courses, so admin auth is a real ownership check
+(Course.lecturer_id == account.id) rather than a slug match.
 """
 
 import os
@@ -22,7 +24,7 @@ from app.config import settings
 from app.db import get_db
 from app.models_course import Student
 from app import logging_service
-from app.models_platform import Lecturer
+from app.models_platform import Course, Lecturer
 from app.monitoring import repeated_platform_event
 from app.security import read_session_cookie
 from app.tenant_db import course_session
@@ -34,18 +36,13 @@ templates = Jinja2Templates(
 # Deliberately NOT a contextvars.ContextVar here. FastAPI dispatches each sync
 # dependency via anyio's run_in_threadpool, and every one of those calls runs
 # inside its own COPY of the current context - a var.set() performed inside
-# get_lecturer's copy never propagates back to the route handler's context, so
+# get_course's copy never propagates back to the route handler's context, so
 # a contextvar silently reads back its default everywhere it's actually used.
 # request.state is a plain attribute on the one shared Request object instead,
 # which every dependency and the route handler all genuinely share. Jinja's
 # pass_context then pulls that same `request` back out of the render context
 # (Jinja2Templates always injects it) without every template call site having
 # to pass it explicitly.
-
-
-def _lecturer_from(context) -> Lecturer | None:
-    request = context.get("request")
-    return getattr(request.state, "lecturer", None) if request is not None else None
 
 
 @pass_context
@@ -73,7 +70,7 @@ def course(context) -> _CourseBranding:
     """Jinja global: `{{ course().brand }}` etc - the current request's course
     identity, with the same generic fallbacks Settings.brand/subtitle/footer used
     to provide when a course had nothing configured. Works identically on
-    platform-level pages, where there is no lecturer at all - everything falls
+    platform-level pages, where there is no course at all - everything falls
     back to the platform's own generic name."""
     request = context.get("request")
     brand = getattr(request.state, "course_brand", "") if request is not None else ""
@@ -102,38 +99,39 @@ templates.env.globals["verification_token_hours"] = settings.verification_token_
 # ------------------------------------------------------------------------ tenancy
 
 
-def get_lecturer(request: Request, slug: str, platform_db: Session = Depends(get_db)) -> Lecturer:
-    """Resolves the URL's /{slug} to a Lecturer row and marks this request as
+def get_course(request: Request, slug: str, platform_db: Session = Depends(get_db)) -> Course:
+    """Resolves the URL's /{slug} to a Course row and marks this request as
     belonging to that course for course_url()/course - see the note above on
     why that's request.state and not a contextvar. Reachable even before the
-    lecturer's own database is connected - the setup page needs that."""
-    lecturer = platform_db.scalar(select(Lecturer).where(Lecturer.slug == slug))
-    if lecturer is None:
+    course's own database is connected - the setup page needs that."""
+    course_row = platform_db.scalar(select(Course).where(Course.slug == slug))
+    if course_row is None:
         raise HTTPException(status_code=404, detail="No course found at this address.")
-    request.state.lecturer = lecturer
-    request.state.course_slug = lecturer.slug
-    request.state.course_brand = lecturer.course_code or settings.app_name
-    request.state.course_subtitle = lecturer.course_title or "Assessment with clarity and integrity."
-    request.state.course_footer = lecturer.institution or settings.app_name
-    return lecturer
+    request.state.course = course_row
+    request.state.course_slug = course_row.slug
+    request.state.course_brand = course_row.course_code or settings.app_name
+    request.state.course_subtitle = course_row.course_title or "Assessment with clarity and integrity."
+    request.state.course_footer = course_row.institution or settings.app_name
+    return course_row
 
 
-def require_course_ready(lecturer: Lecturer = Depends(get_lecturer)) -> Lecturer:
-    """Gate for every route that actually touches course data. A lecturer who
-    hasn't connected (and had validated) a database yet gets sent to finish
-    that, instead of every student-facing route failing deep in tenant_db."""
-    if not lecturer.database_ready:
+def require_course_ready(course: Course = Depends(get_course)) -> Course:
+    """Gate for every route that actually touches course data. A course that
+    hasn't been connected (and had validated) a database yet sends the visitor
+    to finish that, instead of every student-facing route failing deep in
+    tenant_db."""
+    if not course.database_ready:
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER,
-            headers={"Location": f"/{lecturer.slug}/admin/setup"},
+            headers={"Location": f"/{course.slug}/admin/setup"},
             detail="This course has not finished being set up.",
         )
-    return lecturer
+    return course
 
 
-def get_course_db(lecturer: Lecturer = Depends(require_course_ready)):
+def get_course_db(course: Course = Depends(require_course_ready)):
     try:
-        yield from course_session(lecturer)
+        yield from course_session(course)
     except HTTPException:
         raise
     except (OperationalError, InterfaceError):
@@ -141,7 +139,7 @@ def get_course_db(lecturer: Lecturer = Depends(require_course_ready)):
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(
                 "Course database is unavailable for this course. "
-                f"Reconnect it at /{lecturer.slug}/admin/setup."
+                f"Reconnect it at /{course.slug}/admin/setup."
             ),
         )
 
@@ -155,20 +153,20 @@ def session_data(request: Request) -> dict | None:
 
 def current_student(
     request: Request,
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
     platform_db: Session = Depends(get_db),
 ) -> Student | None:
     data = session_data(request)
     if not data or data.get("role") != "student":
         return None
-    if data.get("slug") != lecturer.slug:
+    if data.get("slug") != course.slug:
         logging_service.record_platform(
             platform_db,
             "CROSS_COURSE_ACCESS",
             "Session cookie course does not match request course.",
             request=request,
-            payload={"requested_slug": lecturer.slug},
+            payload={"requested_slug": course.slug},
         )
         repeated_platform_event(
             platform_db,
@@ -185,54 +183,76 @@ def current_student(
 
 def require_student(
     request: Request,
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ) -> Student:
-    student = current_student(request, lecturer, db)
+    student = current_student(request, course, db)
     if student is None:
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER,
-            headers={"Location": f"/{lecturer.slug}/login"},
+            headers={"Location": f"/{course.slug}/login"},
             detail="Sign in required.",
         )
     if not student.can_sit:
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER,
-            headers={"Location": f"/{lecturer.slug}/login?pending=1"},
+            headers={"Location": f"/{course.slug}/login?pending=1"},
             detail="Account not ready.",
         )
     return student
 
 
+def current_account(request: Request, platform_db: Session = Depends(get_db)) -> Lecturer | None:
+    """The signed-in lecturer *account*, independent of any one course - used by
+    platform-level routes (/admin/courses, /login) that aren't scoped to a slug."""
+    data = session_data(request)
+    if not data or data.get("role") != "admin":
+        return None
+    return platform_db.get(Lecturer, data.get("id"))
+
+
+def require_account(request: Request, platform_db: Session = Depends(get_db)) -> Lecturer:
+    account = current_account(request, platform_db)
+    if account is None:
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            headers={"Location": "/login"},
+            detail="Sign in required.",
+        )
+    return account
+
+
 def current_admin(
     request: Request,
-    lecturer: Lecturer = Depends(get_lecturer),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ) -> Lecturer | None:
     """The signed-in course owner - looked up in the PLATFORM database (that's
-    where Lecturer accounts live), not the course database current_student uses."""
-    data = session_data(request)
-    if not data or data.get("role") != "admin" or data.get("slug") != lecturer.slug:
+    where Lecturer accounts live), not the course database current_student uses.
+    The account isn't slug-scoped (it may own several courses); what's checked
+    here is real ownership of *this* course, not a match against a slug stashed
+    in the cookie."""
+    account = current_account(request, platform_db)
+    if account is None:
         return None
-    found = platform_db.get(Lecturer, data.get("id"))
-    if found is None or found.slug != lecturer.slug:
+    if course.lecturer_id != account.id:
         return None
-    return found
+    return account
 
 
 def require_admin(
     request: Request,
-    lecturer: Lecturer = Depends(get_lecturer),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ) -> Lecturer:
-    """Auth only - does NOT require the course database to be ready, so the
-    setup page itself stays reachable. Routes that touch course data should
+    """Auth + ownership only - does NOT require the course database to be ready, so
+    the setup page itself stays reachable. Routes that touch course data should
     depend on require_admin_ready instead."""
-    admin = current_admin(request, lecturer, platform_db)
+    admin = current_admin(request, course, platform_db)
     if admin is None:
         raise HTTPException(
             status_code=status.HTTP_303_SEE_OTHER,
-            headers={"Location": f"/{lecturer.slug}/admin/login"},
+            headers={"Location": f"/{course.slug}/admin/login"},
             detail="Admin sign in required.",
         )
     return admin
@@ -240,10 +260,12 @@ def require_admin(
 
 def require_admin_ready(
     admin: Lecturer = Depends(require_admin),
-    lecturer: Lecturer = Depends(require_course_ready),
-) -> Lecturer:
-    """Auth AND a connected database - what every admin route except /setup wants."""
-    return admin
+    course: Course = Depends(require_course_ready),
+) -> Course:
+    """Auth, ownership AND a connected database - what every admin route except
+    /setup wants. Returns the Course (what nearly every admin route actually
+    needs); depend on require_admin too if you also need the account itself."""
+    return course
 
 
 def client_ip(request: Request) -> str:

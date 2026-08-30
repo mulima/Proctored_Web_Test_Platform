@@ -56,24 +56,34 @@ def read_session_cookie(token: str | None) -> dict[str, Any] | None:
         return None
 
 
-def set_session_cookie(response, *, role: str, slug: str, id: int) -> None:
-    """The one place a session cookie gets written, for students and lecturers alike.
+def set_session_cookie(response, *, role: str, id: int, slug: str | None = None) -> None:
+    """The one place a session cookie gets written.
 
-    The payload carries `slug` alongside `role`/`id` because under multi-tenancy a bare
-    numeric id means nothing on its own - it's only meaningful within one specific
-    lecturer's database. `current_student`/`current_lecturer` (app/deps.py) reject a
-    cookie whose slug doesn't match the URL being requested, same as an invalid
-    signature. The cookie is also scoped with Path=/{slug} as defense in depth, so a
-    browser won't even attach one course's cookie to another course's requests.
+    Students: the payload carries `slug` alongside `role`/`id` because a bare numeric
+    id means nothing on its own - it's only meaningful within one specific course's
+    database. `current_student` (app/deps.py) rejects a cookie whose slug doesn't
+    match the URL being requested, same as an invalid signature. The cookie is also
+    scoped with Path=/{slug} as defense in depth, so a browser won't even attach one
+    course's cookie to another course's requests.
+
+    Lecturers (`slug=None`): the id is an *account* id, not scoped to any one course -
+    the same account can own several. There's no slug to embed or path-scope to;
+    `current_admin` instead checks course ownership (`Course.lecturer_id ==
+    account.id`) on every request, a real database check rather than a string match.
+    That's what lets one signed-in session move between every course that account
+    owns without a fresh login.
     """
+    payload = {"role": role, "id": id}
+    if slug is not None:
+        payload["slug"] = slug
     response.set_cookie(
         settings.session_cookie,
-        make_session_cookie({"role": role, "slug": slug, "id": id}),
+        make_session_cookie(payload),
         max_age=settings.session_max_age_seconds,
         httponly=True,
         samesite="lax",
         secure=settings.base_url.startswith("https"),
-        path=f"/{slug}",
+        path=f"/{slug}" if slug is not None else "/",
     )
 
 

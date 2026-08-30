@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}My courses &middot; {{ app_name }}{% endblock %}
+{% block nav %}<a href="/logout">Sign out</a>{% endblock %}
+{% block content %}
+<h1>My courses</h1>
+<p class="muted">Signed in as {{ lecturer.email }}. Open any course below - no need to
+sign in again, this session covers every course on this account.</p>
+<section class="card">
+  {% if courses %}
+  <div class="scroll"><table>
+    <tr><th>Address</th><th>Course</th><th>Institution</th><th>State</th><th></th></tr>
+    {% for course in courses %}
+    <tr>
+      <td><code>/{{ course.slug }}</code></td>
+      <td>{{ course.course_code or course.course_title or '—' }}</td>
+      <td>{{ course.institution }}</td>
+      <td>{% if course.database_ready %}<span class="chip ok">ready</span>
+          {% else %}<span class="chip">setup incomplete</span>{% endif %}</td>
+      <td><a class="button primary" href="/{{ course.slug }}/admin">Open</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<p class="muted">No courses yet.</p>{% endif %}
+  <p><a class="button" href="/admin/courses/new">+ New course</a></p>
+</section>
+{% endblock %}

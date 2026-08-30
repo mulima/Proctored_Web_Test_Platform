@@ -15,11 +15,11 @@ from sqlalchemy.orm import Session
 
 from app import logging_service
 from app.config import settings
-from app.deps import get_course_db, get_lecturer, require_course_ready, templates
+from app.deps import get_course, get_course_db, require_course_ready, templates
 from app.mailer import Message, send
 from app.monitoring import repeated_course_event
 from app.models_course import Student
-from app.models_platform import Lecturer
+from app.models_platform import Course
 from app.security import (
     hash_password,
     make_password_reset_token,
@@ -54,28 +54,28 @@ def _domain_allowed(email: str) -> bool:
 
 
 def send_verification_email(
-    db: Session, student: Student, lecturer: Lecturer, request: Request
+    db: Session, student: Student, course: Course, request: Request
 ) -> bool:
-    token = make_verification_token(student.email, lecturer.slug)
+    token = make_verification_token(student.email, course.slug)
     student.verification_token = token
     student.verification_sent_at = datetime.utcnow()
     db.commit()
 
-    link = f"{settings.base_url.rstrip('/')}/{lecturer.slug}/verify?token={token}"
+    link = f"{settings.base_url.rstrip('/')}/{course.slug}/verify?token={token}"
     body = (
         f"Hello {student.full_name},\n\n"
-        f"An account was registered for {lecturer.subtitle} using this email address.\n\n"
+        f"An account was registered for {course.subtitle} using this email address.\n\n"
         f"Computer number: {student.computer_number}\n\n"
         "Confirm the address by opening this link:\n\n"
         f"{link}\n\n"
         f"The link works once and expires in "
         f"{settings.verification_token_max_age_seconds // 3600} hours.\n\n"
         "If you did not register, ignore this message and the account stays unusable.\n\n"
-        f"{lecturer.footer}\n"
+        f"{course.footer}\n"
     )
     delivered = send(
-        Message(to=student.email, subject=f"Confirm your {lecturer.brand} account", body=body),
-        lecturer,
+        Message(to=student.email, subject=f"Confirm your {course.brand} account", body=body),
+        course,
     )
     logging_service.record(
         db,
@@ -89,22 +89,22 @@ def send_verification_email(
 
 
 def send_password_reset_email(
-    db: Session, student: Student, lecturer: Lecturer, request: Request
+    db: Session, student: Student, course: Course, request: Request
 ) -> bool:
-    token = make_password_reset_token(student.email, lecturer.slug, student.password_hash)
-    link = f"{settings.base_url.rstrip('/')}/{lecturer.slug}/reset-password?token={token}"
+    token = make_password_reset_token(student.email, course.slug, student.password_hash)
+    link = f"{settings.base_url.rstrip('/')}/{course.slug}/reset-password?token={token}"
     body = (
         f"Hello {student.full_name},\n\n"
-        f"A password reset was requested for your {lecturer.brand} account.\n\n"
+        f"A password reset was requested for your {course.brand} account.\n\n"
         "Set a new password by opening this link:\n\n"
         f"{link}\n\n"
         f"The link expires in {settings.password_reset_token_max_age_seconds // 3600} hour(s).\n"
         "If you did not request this, you can ignore this message.\n\n"
-        f"{lecturer.footer}\n"
+        f"{course.footer}\n"
     )
     delivered = send(
-        Message(to=student.email, subject=f"Reset your {lecturer.brand} password", body=body),
-        lecturer,
+        Message(to=student.email, subject=f"Reset your {course.brand} password", body=body),
+        course,
     )
     logging_service.record(
         db,
@@ -118,7 +118,7 @@ def send_password_reset_email(
 
 
 @router.get("/register", response_class=HTMLResponse)
-def register_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
+def register_form(request: Request, course: Course = Depends(require_course_ready)):
     return templates.TemplateResponse(request, "register.html", {"errors": [], "values": {}})
 
 
@@ -130,7 +130,7 @@ def register(
     computer_number: str = Form(...),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
@@ -153,7 +153,7 @@ def register(
         errors.append("Enter your computer number.")
     if password != confirm_password:
         errors.append("The two passwords do not match.")
-    errors.extend(password_problems(password, course_code=lecturer.course_code))
+    errors.extend(password_problems(password, course_code=course.course_code))
 
     if not errors:
         existing_email = db.scalar(select(Student).where(func.lower(Student.email) == email))
@@ -166,7 +166,7 @@ def register(
             else:
                 # Re-registering an unverified address just resends the link. Friendlier
                 # than an error, and it cannot be used to discover verified accounts.
-                send_verification_email(db, existing_email, lecturer, request)
+                send_verification_email(db, existing_email, course, request)
                 return templates.TemplateResponse(
                     request, "register_done.html", {"email": email, "resent": True}
                 )
@@ -205,7 +205,7 @@ def register(
         student_id=student.id,
         request=request,
     )
-    send_verification_email(db, student, lecturer, request)
+    send_verification_email(db, student, course, request)
     return templates.TemplateResponse(
         request, "register_done.html", {"email": email, "resent": False}
     )
@@ -215,10 +215,10 @@ def register(
 def verify(
     request: Request,
     token: str = "",
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    email = read_verification_token(token, lecturer.slug)
+    email = read_verification_token(token, course.slug)
     student = (
         db.scalar(select(Student).where(func.lower(Student.email) == email)) if email else None
     )
@@ -266,7 +266,7 @@ def verify(
 
 
 @router.get("/resend", response_class=HTMLResponse)
-def resend_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
+def resend_form(request: Request, course: Course = Depends(require_course_ready)):
     return templates.TemplateResponse(request, "resend.html", {"sent": False})
 
 
@@ -274,19 +274,19 @@ def resend_form(request: Request, lecturer: Lecturer = Depends(require_course_re
 def resend(
     request: Request,
     email: str = Form(...),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
     student = db.scalar(select(Student).where(func.lower(Student.email) == email))
     if student and not student.is_verified:
-        send_verification_email(db, student, lecturer, request)
+        send_verification_email(db, student, course, request)
     # Always the same answer, so this cannot be used to enumerate who has registered.
     return templates.TemplateResponse(request, "resend.html", {"sent": True})
 
 
 @router.get("/forgot-password", response_class=HTMLResponse)
-def forgot_password_form(request: Request, lecturer: Lecturer = Depends(require_course_ready)):
+def forgot_password_form(request: Request, course: Course = Depends(require_course_ready)):
     return templates.TemplateResponse(request, "forgot_password.html", {"sent": False})
 
 
@@ -294,13 +294,13 @@ def forgot_password_form(request: Request, lecturer: Lecturer = Depends(require_
 def forgot_password(
     request: Request,
     email: str = Form(...),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
     student = db.scalar(select(Student).where(func.lower(Student.email) == email))
     if student and student.is_verified and not student.is_blocked:
-        send_password_reset_email(db, student, lecturer, request)
+        send_password_reset_email(db, student, course, request)
     logging_service.record(
         db,
         "PASSWORD_RESET_REQUESTED",
@@ -312,8 +312,8 @@ def forgot_password(
     return templates.TemplateResponse(request, "forgot_password.html", {"sent": True})
 
 
-def _student_from_reset_token(db: Session, lecturer: Lecturer, token: str) -> Student | None:
-    resolved = read_password_reset_token(token, lecturer.slug)
+def _student_from_reset_token(db: Session, course: Course, token: str) -> Student | None:
+    resolved = read_password_reset_token(token, course.slug)
     if not resolved:
         return None
     email, marker = resolved
@@ -329,10 +329,10 @@ def _student_from_reset_token(db: Session, lecturer: Lecturer, token: str) -> St
 def reset_password_form(
     request: Request,
     token: str = "",
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    student = _student_from_reset_token(db, lecturer, token)
+    student = _student_from_reset_token(db, course, token)
     return templates.TemplateResponse(
         request,
         "reset_password.html",
@@ -352,10 +352,10 @@ def reset_password(
     token: str = Form(""),
     password: str = Form(...),
     confirm_password: str = Form(...),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
-    student = _student_from_reset_token(db, lecturer, token)
+    student = _student_from_reset_token(db, course, token)
     if student is None:
         return templates.TemplateResponse(
             request,
@@ -367,7 +367,7 @@ def reset_password(
     errors: list[str] = []
     if password != confirm_password:
         errors.append("The two passwords do not match.")
-    errors.extend(password_problems(password, course_code=lecturer.course_code))
+    errors.extend(password_problems(password, course_code=course.course_code))
 
     if errors:
         return templates.TemplateResponse(
@@ -395,7 +395,7 @@ def reset_password(
 
 @router.get("/login", response_class=HTMLResponse)
 def login_form(
-    request: Request, pending: int = 0, lecturer: Lecturer = Depends(require_course_ready)
+    request: Request, pending: int = 0, course: Course = Depends(require_course_ready)
 ):
     note = ""
     if pending:
@@ -408,7 +408,7 @@ def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    lecturer: Lecturer = Depends(require_course_ready),
+    course: Course = Depends(require_course_ready),
     db: Session = Depends(get_course_db),
 ):
     email = _normalise_email(email)
@@ -467,13 +467,13 @@ def login(
     db.commit()
     logging_service.record(db, "LOGIN", email, student_id=student.id, request=request)
 
-    response = RedirectResponse(f"/{lecturer.slug}/", status_code=303)
-    set_session_cookie(response, role="student", slug=lecturer.slug, id=student.id)
+    response = RedirectResponse(f"/{course.slug}/", status_code=303)
+    set_session_cookie(response, role="student", slug=course.slug, id=student.id)
     return response
 
 
 @router.get("/logout")
-def logout(request: Request, lecturer: Lecturer = Depends(get_lecturer)):
-    response = RedirectResponse(f"/{lecturer.slug}/login", status_code=303)
-    response.delete_cookie(settings.session_cookie, path=f"/{lecturer.slug}")
+def logout(request: Request, course: Course = Depends(get_course)):
+    response = RedirectResponse(f"/{course.slug}/login", status_code=303)
+    response.delete_cookie(settings.session_cookie, path=f"/{course.slug}")
     return response

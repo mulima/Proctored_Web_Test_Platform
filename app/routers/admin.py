@@ -1,11 +1,14 @@
 """Admin panel: exam and question setup, roster, results, evidence, logs - and,
 new here, the course's own setup: database connection and branding.
 
-The lecturer's identity and password now live in the platform database
-(app/models_platform.py's Lecturer), not in the course database this router
-otherwise reads and writes via get_course_db. Every route below except
-/setup itself additionally requires the course database to be connected and
-validated (require_admin_ready) - see app/deps.py.
+A lecturer's identity and password live in the platform database as an *account*
+(app/models_platform.py's Lecturer), separate from any one course - one account can
+own several Course rows. Every route below except /login and /setup itself
+additionally requires the course database to be connected and validated
+(require_admin_ready) - see app/deps.py. Course-switching (moving between courses
+the signed-in account owns) needs no special handling here: the session cookie isn't
+tied to a course, so simply visiting a different owned course's /{slug}/admin/...
+passes the ownership check in require_admin without a fresh login.
 """
 
 import json
@@ -23,7 +26,7 @@ from sqlalchemy.orm import Session, joinedload, selectinload
 from app import logging_service, pdf, proctor, vision
 from app.config import settings
 from app.db import get_db
-from app.deps import get_course_db, get_lecturer, require_admin, require_admin_ready, templates
+from app.deps import get_course, get_course_db, require_admin, require_admin_ready, templates
 from app.monitoring import repeated_platform_event
 from app.models_course import (
     AppLog,
@@ -34,7 +37,7 @@ from app.models_course import (
     Student,
     SubmissionAuditEvent,
 )
-from app.models_platform import Lecturer
+from app.models_platform import Course, Lecturer
 from app.security import set_session_cookie, verify_password
 from app.tenant_crypto import CredentialEncryptionError, encrypt
 from app.tenant_db import (
@@ -138,9 +141,9 @@ def _exam_audit_rows(attempts: list[Attempt]) -> list[dict]:
 
 
 @router.get("/login", response_class=HTMLResponse)
-def login_form(request: Request, lecturer: Lecturer = Depends(get_lecturer)):
+def login_form(request: Request, course: Course = Depends(get_course)):
     return templates.TemplateResponse(
-        request, "admin/login.html", {"errors": [], "prefill_email": lecturer.email}
+        request, "admin/login.html", {"errors": [], "prefill_email": ""}
     )
 
 
@@ -149,17 +152,19 @@ def login(
     request: Request,
     email: str = Form(...),
     password: str = Form(...),
-    lecturer: Lecturer = Depends(get_lecturer),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ):
     email = email.strip().lower()
-    if email != lecturer.email or not verify_password(password, lecturer.password_hash):
+    account = platform_db.scalar(select(Lecturer).where(func.lower(Lecturer.email) == email))
+
+    def _reject(message: str, status_code: int = 401):
         logging_service.record_platform(
             platform_db,
             "ADMIN_LOGIN_FAILED",
             email,
             level="WARNING",
-            lecturer_id=lecturer.id,
+            lecturer_id=account.id if account else None,
             request=request,
         )
         repeated_platform_event(
@@ -171,10 +176,18 @@ def login(
         return templates.TemplateResponse(
             request,
             "admin/login.html",
-            {"errors": ["Email or password is incorrect."], "prefill_email": email},
-            status_code=401,
+            {"errors": [message], "prefill_email": email},
+            status_code=status_code,
         )
-    if not lecturer.is_verified:
+
+    if account is None or not verify_password(password, account.password_hash):
+        # Same message whether the email or the password was wrong, and whether or
+        # not this account owns *this* course - a login form is not the place to
+        # reveal who runs what.
+        return _reject("Email or password is incorrect.")
+    if course.lecturer_id != account.id:
+        return _reject("Email or password is incorrect.")
+    if not account.is_verified:
         return templates.TemplateResponse(
             request,
             "admin/login.html",
@@ -188,29 +201,29 @@ def login(
             status_code=403,
         )
 
-    if lecturer.database_ready:
-        db_probe_error = probe_course_connection(lecturer)
+    if course.database_ready:
+        db_probe_error = probe_course_connection(course)
         if db_probe_error:
             logging_service.record_platform(
                 platform_db,
                 "ADMIN_LOGIN_DB_UNAVAILABLE",
                 db_probe_error,
                 level="ERROR",
-                lecturer_id=lecturer.id,
+                lecturer_id=account.id,
                 request=request,
             )
             response = RedirectResponse(
-                f"/{lecturer.slug}/admin/setup?db_unavailable=1",
+                f"/{course.slug}/admin/setup?db_unavailable=1",
                 status_code=303,
             )
-            set_session_cookie(response, role="admin", slug=lecturer.slug, id=lecturer.id)
+            set_session_cookie(response, role="admin", id=account.id)
             return response
 
     logging_service.record_platform(
-        platform_db, "ADMIN_LOGIN", email, lecturer_id=lecturer.id, request=request
+        platform_db, "ADMIN_LOGIN", email, lecturer_id=account.id, request=request
     )
-    response = RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
-    set_session_cookie(response, role="admin", slug=lecturer.slug, id=lecturer.id)
+    response = RedirectResponse(f"/{course.slug}/admin", status_code=303)
+    set_session_cookie(response, role="admin", id=account.id)
     return response
 
 
@@ -219,22 +232,24 @@ def login(
 
 @router.get("/setup", response_class=HTMLResponse)
 def setup_form(
-    request: Request, lecturer: Lecturer = Depends(require_admin)
+    request: Request,
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(get_course),
 ):
     return templates.TemplateResponse(
-        request, "admin/setup.html", _setup_context(lecturer, [])
+        request, "admin/setup.html", _setup_context(course, [])
     )
 
 
-def _setup_context(lecturer: Lecturer, errors: list[str]) -> dict:
-    storage_mode = lecturer.course_storage_mode or "external"
+def _setup_context(course: Course, errors: list[str]) -> dict:
+    storage_mode = course.course_storage_mode or "external"
     return {
         "errors": errors,
-        "lecturer": lecturer,
-        "has_database": bool(lecturer.database_url_encrypted) or bool(lecturer.platform_db_schema),
+        "lecturer": course,
         "storage_mode": storage_mode,
-        "has_smtp_password": bool(lecturer.smtp_password_encrypted),
-        "has_resend_key": bool(lecturer.resend_api_key_encrypted),
+        "has_database": bool(course.database_url_encrypted) or bool(course.platform_db_schema),
+        "has_smtp_password": bool(course.smtp_password_encrypted),
+        "has_resend_key": bool(course.resend_api_key_encrypted),
     }
 
 
@@ -243,7 +258,8 @@ def setup_database(
     request: Request,
     storage_mode: str = Form("external"),
     database_url: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ):
     errors: list[str] = []
@@ -253,7 +269,7 @@ def setup_database(
 
     if storage_mode == "platform":
         try:
-            schema = lecturer.platform_db_schema or default_platform_schema_name(lecturer)
+            schema = course.platform_db_schema or default_platform_schema_name(course)
             provision_platform_schema(schema)
         except Exception as exc:
             errors.append(
@@ -261,20 +277,20 @@ def setup_database(
                 f"{type(exc).__name__}: {str(exc)[:300]}"
             )
         else:
-            lecturer.course_storage_mode = "platform"
-            lecturer.platform_db_schema = schema
-            lecturer.database_url_encrypted = None
-            lecturer.database_ready = True
-            forget(lecturer.id)
+            course.course_storage_mode = "platform"
+            course.platform_db_schema = schema
+            course.database_url_encrypted = None
+            course.database_ready = True
+            forget(course.id)
             logging_service.record_platform(
                 platform_db,
                 "LECTURER_DATABASE_CONNECTED_PLATFORM",
-                f"{lecturer.slug} -> schema {schema}",
-                lecturer_id=lecturer.id,
+                f"{course.slug} -> schema {schema}",
+                lecturer_id=admin.id,
                 request=request,
             )
             platform_db.commit()
-            destination = f"/{lecturer.slug}/admin" if lecturer.database_ready else f"/{lecturer.slug}/admin/setup?saved=1"
+            destination = f"/{course.slug}/admin" if course.database_ready else f"/{course.slug}/admin/setup?saved=1"
             return RedirectResponse(destination, status_code=303)
 
     database_url = database_url.strip()
@@ -310,16 +326,16 @@ def setup_database(
                         "CREDENTIAL_ENCRYPTION_KEY."
                     )
                 else:
-                    lecturer.course_storage_mode = "external"
-                    lecturer.platform_db_schema = None
-                    lecturer.database_url_encrypted = encrypted
-                    lecturer.database_ready = True
-                    forget(lecturer.id)  # drop any previously cached engine for this lecturer
+                    course.course_storage_mode = "external"
+                    course.platform_db_schema = None
+                    course.database_url_encrypted = encrypted
+                    course.database_ready = True
+                    forget(course.id)  # drop any previously cached engine for this course
                     logging_service.record_platform(
                         platform_db,
                         "LECTURER_DATABASE_CONNECTED",
-                        lecturer.slug,
-                        lecturer_id=lecturer.id,
+                        course.slug,
+                        lecturer_id=admin.id,
                         request=request,
                     )
 
@@ -327,9 +343,9 @@ def setup_database(
 
     if errors:
         return templates.TemplateResponse(
-            request, "admin/setup.html", _setup_context(lecturer, errors), status_code=400
+            request, "admin/setup.html", _setup_context(course, errors), status_code=400
         )
-    destination = f"/{lecturer.slug}/admin" if lecturer.database_ready else f"/{lecturer.slug}/admin/setup?saved=1"
+    destination = f"/{course.slug}/admin" if course.database_ready else f"/{course.slug}/admin/setup?saved=1"
     return RedirectResponse(destination, status_code=303)
 
 
@@ -339,14 +355,15 @@ def setup_branding(
     course_code: str = Form(""),
     course_title: str = Form(""),
     institution: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ):
-    lecturer.course_code = course_code.strip()
-    lecturer.course_title = course_title.strip()
-    lecturer.institution = institution.strip()
+    course.course_code = course_code.strip()
+    course.course_title = course_title.strip()
+    course.institution = institution.strip()
     platform_db.commit()
-    return RedirectResponse(f"/{lecturer.slug}/admin/setup?saved=1", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/setup?saved=1", status_code=303)
 
 
 @router.post("/setup/email", response_class=HTMLResponse)
@@ -360,7 +377,8 @@ def setup_email(
     smtp_password: str = Form(""),
     smtp_use_tls: str = Form(""),
     resend_api_key: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(get_course),
     platform_db: Session = Depends(get_db),
 ):
     """Every field here is optional - blank means "use the platform's own", the
@@ -372,37 +390,37 @@ def setup_email(
     mail_backend = mail_backend.strip().lower()
     if mail_backend and mail_backend not in ("console", "smtp", "resend"):
         errors.append("Mail backend must be console, smtp, or resend.")
-    if mail_backend == "smtp" and not (smtp_host.strip() or lecturer.smtp_host):
+    if mail_backend == "smtp" and not (smtp_host.strip() or course.smtp_host):
         errors.append("SMTP host is required when the mail backend is smtp.")
-    if mail_backend == "resend" and not (resend_api_key.strip() or lecturer.resend_api_key_encrypted):
+    if mail_backend == "resend" and not (resend_api_key.strip() or course.resend_api_key_encrypted):
         errors.append("A Resend API key is required when the mail backend is resend.")
 
     if errors:
         return templates.TemplateResponse(
-            request, "admin/setup.html", _setup_context(lecturer, errors), status_code=400
+            request, "admin/setup.html", _setup_context(course, errors), status_code=400
         )
 
-    lecturer.mail_backend = mail_backend
-    lecturer.mail_from = mail_from.strip()
-    lecturer.smtp_host = smtp_host.strip()
-    lecturer.smtp_port = int(smtp_port) if smtp_port.strip().isdigit() else None
-    lecturer.smtp_username = smtp_username.strip()
-    lecturer.smtp_use_tls = bool(smtp_use_tls)
+    course.mail_backend = mail_backend
+    course.mail_from = mail_from.strip()
+    course.smtp_host = smtp_host.strip()
+    course.smtp_port = int(smtp_port) if smtp_port.strip().isdigit() else None
+    course.smtp_username = smtp_username.strip()
+    course.smtp_use_tls = bool(smtp_use_tls)
     if smtp_password.strip():
-        lecturer.smtp_password_encrypted = encrypt(smtp_password.strip())
+        course.smtp_password_encrypted = encrypt(smtp_password.strip())
     if resend_api_key.strip():
-        lecturer.resend_api_key_encrypted = encrypt(resend_api_key.strip())
+        course.resend_api_key_encrypted = encrypt(resend_api_key.strip())
     platform_db.commit()
     logging_service.record_platform(
-        platform_db, "LECTURER_EMAIL_UPDATED", lecturer.slug, lecturer_id=lecturer.id, request=request
+        platform_db, "LECTURER_EMAIL_UPDATED", course.slug, lecturer_id=admin.id, request=request
     )
-    return RedirectResponse(f"/{lecturer.slug}/admin/setup?saved=1", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/setup?saved=1", status_code=303)
 
 
 @router.get("", response_class=HTMLResponse)
 def home(
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exams = db.scalars(select(Exam).order_by(Exam.id.desc())).all()
@@ -435,7 +453,7 @@ def home(
 @router.get("/json-guide", response_class=HTMLResponse)
 def json_guide(
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
 ):
     return templates.TemplateResponse(request, "admin/json_guide.html", {})
 
@@ -447,11 +465,11 @@ def create_exam(
     duration_minutes: int = Form(90),
     total_marks: int = Form(100),
     section_c_required: int = Form(2),
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = Exam(
-        code=lecturer.course_code,
+        code=course.course_code,
         title=title.strip(),
         duration_minutes=max(1, duration_minutes),
         total_marks=total_marks,
@@ -461,19 +479,19 @@ def create_exam(
     db.add(exam)
     db.commit()
     logging_service.record(db, "EXAM_CREATED", exam.title, request=request)
-    return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam.id}", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam.id}", status_code=303)
 
 
 @router.get("/exams/{exam_id}", response_class=HTMLResponse)
 def exam_detail(
     exam_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     questions = sorted(exam.questions, key=lambda q: (q.section, q.order_index))
     attempt_count = (
         db.scalar(select(func.count(Attempt.id)).where(Attempt.exam_id == exam.id)) or 0
@@ -498,12 +516,13 @@ def exam_detail(
 def regenerate_exam_pdfs(
     exam_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
 
     attempts = db.scalars(
         select(Attempt)
@@ -525,16 +544,16 @@ def regenerate_exam_pdfs(
         for attempt in attempts:
             old_sha256 = _sha256(attempt.pdf_bytes)
             answers_by_question = {answer.question_id: answer for answer in attempt.answers}
-            rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+            rebuilt = pdf.build(attempt, answers_by_question, course)
             rebuilt_sha256 = _sha256(rebuilt)
             attempt.pdf_bytes = rebuilt
-            attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+            attempt.pdf_filename = pdf.filename_for(attempt, course)
             _record_submission_audit(
                 db,
                 attempt=attempt,
                 action="regenerate",
                 status="ok",
-                actor=lecturer.email,
+                actor=admin.email,
                 message="Submission PDF regenerated from current records.",
                 stored_sha256=old_sha256,
                 current_sha256=rebuilt_sha256,
@@ -552,7 +571,7 @@ def regenerate_exam_pdfs(
             payload={"exam_id": exam.id},
         )
         return RedirectResponse(
-            f"/{lecturer.slug}/admin/exams/{exam.id}?error=regeneration",
+            f"/{course.slug}/admin/exams/{exam.id}?error=regeneration",
             status_code=303,
         )
 
@@ -566,7 +585,7 @@ def regenerate_exam_pdfs(
         payload={"exam_id": exam.id, "attempt_count": len(attempts)},
     )
     return RedirectResponse(
-        f"/{lecturer.slug}/admin/exams/{exam.id}?regenerated={len(attempts)}",
+        f"/{course.slug}/admin/exams/{exam.id}?regenerated={len(attempts)}",
         status_code=303,
     )
 
@@ -574,7 +593,7 @@ def regenerate_exam_pdfs(
 @router.get("/exams/{exam_id}/submission-pdfs.zip")
 def exam_submission_pdfs_zip(
     exam_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
@@ -596,7 +615,7 @@ def exam_submission_pdfs_zip(
     archive = BytesIO()
     with ZipFile(archive, mode="w", compression=ZIP_DEFLATED) as bundle:
         for attempt in attempts:
-            filename = (attempt.pdf_filename or "").strip() or pdf.filename_for(attempt, lecturer)
+            filename = (attempt.pdf_filename or "").strip() or pdf.filename_for(attempt, course)
             if not filename.lower().endswith(".pdf"):
                 filename += ".pdf"
             # Prefix attempt id to keep names stable and unique across same-student retries.
@@ -613,7 +632,7 @@ def exam_submission_pdfs_zip(
 @router.get("/exams/{exam_id}/audit-report.json")
 def exam_audit_report_json(
     exam_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
@@ -660,7 +679,7 @@ def exam_audit_report_json(
 @router.get("/exams/{exam_id}/audit-report.csv")
 def exam_audit_report_csv(
     exam_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
@@ -727,7 +746,8 @@ def exam_audit_report_csv(
 def regenerate_attempt_pdf(
     attempt_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = db.scalar(
@@ -741,19 +761,19 @@ def regenerate_attempt_pdf(
         )
     )
     if attempt is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/attempts", status_code=303)
 
     old_sha256 = _sha256(attempt.pdf_bytes)
     answers_by_question = {answer.question_id: answer for answer in attempt.answers}
-    rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+    rebuilt = pdf.build(attempt, answers_by_question, course)
     attempt.pdf_bytes = rebuilt
-    attempt.pdf_filename = pdf.filename_for(attempt, lecturer)
+    attempt.pdf_filename = pdf.filename_for(attempt, course)
     _record_submission_audit(
         db,
         attempt=attempt,
         action="regenerate",
         status="ok",
-        actor=lecturer.email,
+        actor=admin.email,
         message="Submission PDF regenerated from current records.",
         stored_sha256=old_sha256,
         current_sha256=_sha256(rebuilt),
@@ -768,7 +788,7 @@ def regenerate_attempt_pdf(
         payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id},
     )
     return RedirectResponse(
-        f"/{lecturer.slug}/admin/attempts/{attempt.id}?regen=1",
+        f"/{course.slug}/admin/attempts/{attempt.id}?regen=1",
         status_code=303,
     )
 
@@ -777,7 +797,8 @@ def regenerate_attempt_pdf(
 def compare_attempt_pdf(
     attempt_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = db.scalar(
@@ -791,10 +812,10 @@ def compare_attempt_pdf(
         )
     )
     if attempt is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/attempts", status_code=303)
 
     answers_by_question = {answer.question_id: answer for answer in attempt.answers}
-    rebuilt = pdf.build(attempt, answers_by_question, lecturer)
+    rebuilt = pdf.build(attempt, answers_by_question, course)
     stored_sha256 = _sha256(attempt.pdf_bytes)
     current_sha256 = _sha256(rebuilt)
     is_match = bool(stored_sha256) and stored_sha256 == current_sha256
@@ -815,7 +836,7 @@ def compare_attempt_pdf(
         attempt=attempt,
         action="compare",
         status="ok" if is_match else "warning",
-        actor=lecturer.email,
+        actor=admin.email,
         message=message,
         stored_sha256=stored_sha256,
         current_sha256=current_sha256,
@@ -830,7 +851,7 @@ def compare_attempt_pdf(
         payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id, "is_match": is_match},
     )
     return RedirectResponse(
-        f"/{lecturer.slug}/admin/attempts/{attempt.id}?cmp={'match' if is_match else 'mismatch'}",
+        f"/{course.slug}/admin/attempts/{attempt.id}?cmp={'match' if is_match else 'mismatch'}",
         status_code=303,
     )
 
@@ -840,15 +861,16 @@ def mark_attempt_reviewed(
     attempt_id: int,
     request: Request,
     review_notes: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin_ready),
+    admin: Lecturer = Depends(require_admin),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = db.scalar(select(Attempt).where(Attempt.id == attempt_id))
     if attempt is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/attempts", status_code=303)
 
     attempt.reviewed_at = datetime.utcnow()
-    attempt.reviewed_by = lecturer.email
+    attempt.reviewed_by = admin.email
     attempt.review_notes = (review_notes or "").strip()
 
     _record_submission_audit(
@@ -856,7 +878,7 @@ def mark_attempt_reviewed(
         attempt=attempt,
         action="review",
         status="ok",
-        actor=lecturer.email,
+        actor=admin.email,
         message="Submission marked as reviewed.",
         payload={"review_notes": attempt.review_notes},
     )
@@ -869,7 +891,7 @@ def mark_attempt_reviewed(
         payload={"attempt_id": attempt.id, "exam_id": attempt.exam_id},
     )
     return RedirectResponse(
-        f"/{lecturer.slug}/admin/attempts/{attempt.id}?reviewed=1",
+        f"/{course.slug}/admin/attempts/{attempt.id}?reviewed=1",
         status_code=303,
     )
 
@@ -877,7 +899,7 @@ def mark_attempt_reviewed(
 @router.get("/attempts/{attempt_id}/audit-report")
 def attempt_audit_report(
     attempt_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     attempt = db.scalar(
@@ -949,12 +971,12 @@ def update_exam(
     section_c_required: int = Form(2),
     instructions: str = Form(""),
     show_submission_pdf: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     exam.title = title.strip()
     exam.duration_minutes = max(1, duration_minutes)
     exam.total_marks = total_marks
@@ -963,25 +985,25 @@ def update_exam(
     exam.show_submission_pdf = bool(show_submission_pdf)
     db.commit()
     logging_service.record(db, "EXAM_UPDATED", exam.title, request=request)
-    return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam_id}", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
 @router.post("/exams/{exam_id}/open")
 def toggle_open(
     exam_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     if not exam.is_open:
         # Opening an exam releases the paper to every verified student at once, so make
         # the obvious mistake impossible: an exam with no questions cannot be opened.
         if not exam.questions:
             return RedirectResponse(
-                f"/{lecturer.slug}/admin/exams/{exam_id}?error=empty", status_code=303
+                f"/{course.slug}/admin/exams/{exam_id}?error=empty", status_code=303
             )
         # Only one exam is live at a time; the sitting page always takes the open one.
         for other in db.scalars(select(Exam).where(Exam.is_open.is_(True))).all():
@@ -995,7 +1017,7 @@ def toggle_open(
         level="WARNING",
         request=request,
     )
-    return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam_id}", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
 @router.post("/exams/{exam_id}/questions")
@@ -1007,16 +1029,16 @@ def add_question(
     title: str = Form(""),
     marks: int = Form(0),
     options: str = Form(""),
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     section = section.strip().upper()[:1]
     if section not in {"A", "B", "C"}:
         return RedirectResponse(
-            f"/{lecturer.slug}/admin/exams/{exam_id}?error=section", status_code=303
+            f"/{course.slug}/admin/exams/{exam_id}?error=section", status_code=303
         )
 
     option_list = None
@@ -1024,7 +1046,7 @@ def add_question(
         option_list = [line.strip() for line in options.splitlines() if line.strip()]
         if len(option_list) < 2:
             return RedirectResponse(
-                f"/{lecturer.slug}/admin/exams/{exam_id}?error=options", status_code=303
+                f"/{course.slug}/admin/exams/{exam_id}?error=options", status_code=303
             )
 
     highest = db.scalar(
@@ -1046,29 +1068,29 @@ def add_question(
     logging_service.record(
         db, "QUESTION_ADDED", f"Section {section} in {exam.title}", request=request
     )
-    return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam_id}", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
 @router.post("/questions/{question_id}/delete")
 def delete_question(
     question_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     question = db.get(Question, question_id)
     if question is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     exam_id = question.exam_id
     if question.exam.attempts:
         # Removing a question that answers already point at would orphan them.
         return RedirectResponse(
-            f"/{lecturer.slug}/admin/exams/{exam_id}?error=inuse", status_code=303
+            f"/{course.slug}/admin/exams/{exam_id}?error=inuse", status_code=303
         )
     db.delete(question)
     db.commit()
     logging_service.record(db, "QUESTION_DELETED", str(question_id), request=request)
-    return RedirectResponse(f"/{lecturer.slug}/admin/exams/{exam_id}", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
 @router.post("/exams/{exam_id}/import")
@@ -1076,18 +1098,18 @@ def import_questions(
     exam_id: int,
     request: Request,
     payload: str = Form(...),
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     """Bulk load from the same quiz_data.json shape the desktop app used."""
     exam = db.get(Exam, exam_id)
     if exam is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     try:
         data = json.loads(payload)
     except json.JSONDecodeError:
         return RedirectResponse(
-            f"/{lecturer.slug}/admin/exams/{exam_id}?error=json", status_code=303
+            f"/{course.slug}/admin/exams/{exam_id}?error=json", status_code=303
         )
 
     added = 0
@@ -1127,7 +1149,7 @@ def import_questions(
         db, "QUESTIONS_IMPORTED", f"{added} questions into {exam.title}", request=request
     )
     return RedirectResponse(
-        f"/{lecturer.slug}/admin/exams/{exam_id}?imported={added}", status_code=303
+        f"/{course.slug}/admin/exams/{exam_id}?imported={added}", status_code=303
     )
 
 
@@ -1138,7 +1160,7 @@ def import_questions(
 def students(
     request: Request,
     q: str = "",
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     query = select(Student).order_by(Student.computer_number)
@@ -1159,18 +1181,18 @@ def student_action(
     student_id: int,
     action: str,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     student = db.get(Student, student_id)
     if student is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/students", status_code=303)
     if action == "resend_verification":
         if not student.is_verified:
             # Reuse the same verification flow students get at registration/resend.
             from app.routers.auth import send_verification_email
 
-            send_verification_email(db, student, lecturer, request)
+            send_verification_email(db, student, course, request)
             logging_service.record(
                 db,
                 "STUDENT_VERIFICATION_RESENT",
@@ -1178,7 +1200,7 @@ def student_action(
                 student_id=student.id,
                 request=request,
             )
-        return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/students", status_code=303)
     if action == "delete":
         if student.attempts:
             # An attempt carries submitted answers and proctoring evidence; deleting the
@@ -1186,7 +1208,7 @@ def student_action(
             # enforcing the foreign key, fail outright. Block it here with a clear reason
             # instead of either.
             return RedirectResponse(
-                f"/{lecturer.slug}/admin/students?error=inuse", status_code=303
+                f"/{course.slug}/admin/students?error=inuse", status_code=303
             )
         label = f"{student.computer_number} {student.full_name}"
         db.delete(student)
@@ -1194,7 +1216,7 @@ def student_action(
         logging_service.record(
             db, "STUDENT_DELETED", label, level="WARNING", request=request
         )
-        return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/students", status_code=303)
     if action == "approve":
         student.is_approved = True
     elif action == "block":
@@ -1215,7 +1237,7 @@ def student_action(
         student_id=student.id,
         request=request,
     )
-    return RedirectResponse(f"/{lecturer.slug}/admin/students", status_code=303)
+    return RedirectResponse(f"/{course.slug}/admin/students", status_code=303)
 
 
 # ----------------------------------------------------------------------------- results
@@ -1226,7 +1248,7 @@ def attempts(
     request: Request,
     flagged: int = 0,
     exam_id: int | None = None,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     query = (
@@ -1269,13 +1291,11 @@ def attempts(
 def attempt_detail(
     attempt_id: int,
     request: Request,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    from sqlalchemy.orm import joinedload
-    
-    # Fetch attempt with explicit eager-loading to prevent lazy-loading issues
-    # This ensures we load student and exam in the correct session context
+    # Explicit eager-loading to prevent lazy-loading issues - loads student and exam
+    # up front in the correct session context.
     attempt = db.scalar(
         select(Attempt)
         .where(Attempt.id == attempt_id)
@@ -1285,9 +1305,9 @@ def attempt_detail(
             selectinload(Attempt.audit_events),
         )
     )
-    
+
     if attempt is None:
-        return RedirectResponse(f"/{lecturer.slug}/admin/attempts", status_code=303)
+        return RedirectResponse(f"/{course.slug}/admin/attempts", status_code=303)
     answers = {answer.question_id: answer for answer in attempt.answers}
     questions = sorted(attempt.exam.questions, key=lambda q: (q.section, q.order_index))
     return templates.TemplateResponse(
@@ -1308,10 +1328,9 @@ def attempt_detail(
 @router.get("/attempts/{attempt_id}/pdf")
 def attempt_pdf(
     attempt_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    # SECURITY FIX: Use select query instead of db.get() for consistency
     attempt = db.scalar(select(Attempt).where(Attempt.id == attempt_id))
     if attempt is None or not attempt.pdf_bytes:
         return JSONResponse({"error": "No PDF stored for this attempt."}, status_code=404)
@@ -1325,10 +1344,9 @@ def attempt_pdf(
 @router.get("/snapshots/{snapshot_id}")
 def snapshot_image(
     snapshot_id: int,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
-    # SECURITY FIX: Use select query instead of db.get() for consistency
     snapshot = db.scalar(select(Snapshot).where(Snapshot.id == snapshot_id))
     if snapshot is None:
         return JSONResponse({"error": "Not found."}, status_code=404)
@@ -1344,7 +1362,7 @@ def logs(
     q: str = "",
     level: str = "",
     limit: int = 200,
-    lecturer: Lecturer = Depends(require_admin_ready),
+    course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     query = select(AppLog).order_by(desc(AppLog.id)).limit(min(max(limit, 10), 1000))

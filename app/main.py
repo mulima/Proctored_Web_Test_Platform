@@ -22,10 +22,10 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from app import logging_service
 from app.config import settings
 from app.db import SessionLocal, engine, get_db
-from app.deps import templates
+from app.deps import require_account, templates
 from app.mailer import Message, send
 from app.monitoring import notify_operator
-from app.models_platform import Lecturer
+from app.models_platform import Course, Lecturer
 from app.routers import admin as admin_router
 from app.routers import auth as auth_router
 from app.routers import exam as exam_router
@@ -34,7 +34,9 @@ from app.security import (
     make_lecturer_verification_token,
     password_problems,
     read_lecturer_verification_token,
+    set_session_cookie,
     tokens_match,
+    verify_password,
 )
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -224,11 +226,14 @@ def signup(
         errors.append("The two passwords do not match.")
     errors.extend(password_problems(password, course_code=course_code))
 
-    if not errors:
-        if db.scalar(select(Lecturer).where(func.lower(Lecturer.email) == email)):
-            errors.append("An account with this email already exists.")
-        if db.scalar(select(Lecturer).where(Lecturer.slug == slug)):
-            errors.append("That course address is already taken.")
+    existing_account = db.scalar(select(Lecturer).where(func.lower(Lecturer.email) == email))
+    if existing_account is not None:
+        errors.append(
+            "An account with this email already exists. Sign in at /login, then use "
+            "“+ New course” to add another course to it."
+        )
+    if not errors and db.scalar(select(Course).where(Course.slug == slug)):
+        errors.append("That course address is already taken.")
 
     if errors:
         return templates.TemplateResponse(
@@ -238,15 +243,21 @@ def signup(
     lecturer = Lecturer(
         email=email,
         password_hash=hash_password(password),
+        is_verified=False,
+        password_set_at=datetime.utcnow(),
+    )
+    db.add(lecturer)
+    db.flush()  # need lecturer.id for the course's FK before either row commits
+
+    course = Course(
+        lecturer_id=lecturer.id,
         slug=slug,
         course_code=course_code.strip(),
         course_title=course_title.strip(),
         institution=institution.strip(),
         database_ready=False,
-        is_verified=False,
-        password_set_at=datetime.utcnow(),
     )
-    db.add(lecturer)
+    db.add(course)
     db.commit()
     db.refresh(lecturer)
     logging_service.record_platform(
@@ -320,6 +331,141 @@ def resend_lecturer(request: Request, email: str = Form(...), db: Session = Depe
         _send_lecturer_verification_email(db, lecturer, request)
     # Always the same answer, so this cannot be used to enumerate who has signed up.
     return templates.TemplateResponse(request, "resend_lecturer.html", {"sent": True})
+
+
+@app.get("/logout")
+def lecturer_logout(request: Request):
+    """Ends the account-level admin session. Distinct from the course-scoped
+    student /{slug}/logout (app/routers/auth.py) - the two cookies are no longer
+    even scoped the same way (Path=/ here vs Path=/{slug} there), so each needs
+    its own logout that clears the matching Path."""
+    response = RedirectResponse("/login", status_code=303)
+    response.delete_cookie(settings.session_cookie, path="/")
+    return response
+
+
+@app.get("/login", response_class=HTMLResponse)
+def lecturer_login_form(request: Request):
+    return templates.TemplateResponse(request, "lecturer_login.html", {"errors": []})
+
+
+@app.post("/login")
+def lecturer_login(
+    request: Request,
+    email: str = Form(...),
+    password: str = Form(...),
+    db: Session = Depends(get_db),
+):
+    """Account-level sign-in - not tied to any one course. Lands on /admin/courses,
+    the switcher, rather than any specific /{slug}/admin. This is the entry point
+    for a returning lecturer who doesn't want to remember a specific course URL;
+    /{slug}/admin/login (app/routers/admin.py) still works too, for anyone who
+    lands on a specific course's admin area first."""
+    email = (email or "").strip().lower()
+    lecturer = db.scalar(select(Lecturer).where(func.lower(Lecturer.email) == email))
+    if lecturer is None or not verify_password(password, lecturer.password_hash):
+        logging_service.record_platform(
+            db, "ADMIN_LOGIN_FAILED", email, level="WARNING", request=request
+        )
+        return templates.TemplateResponse(
+            request,
+            "lecturer_login.html",
+            {"errors": ["Email or password is incorrect."]},
+            status_code=401,
+        )
+    if not lecturer.is_verified:
+        return templates.TemplateResponse(
+            request,
+            "lecturer_login.html",
+            {
+                "errors": [
+                    "Confirm your email address first. Check your inbox for the link, "
+                    "or resend it at /resend-lecturer."
+                ]
+            },
+            status_code=403,
+        )
+    logging_service.record_platform(
+        db, "ADMIN_LOGIN", email, lecturer_id=lecturer.id, request=request
+    )
+    response = RedirectResponse("/admin/courses", status_code=303)
+    set_session_cookie(response, role="admin", id=lecturer.id)
+    return response
+
+
+@app.get("/admin/courses", response_class=HTMLResponse)
+def my_courses(
+    request: Request,
+    lecturer: Lecturer = Depends(require_account),
+    db: Session = Depends(get_db),
+):
+    """The switcher: every course this signed-in account owns. Moving between
+    courses is just clicking through to a different one's /{slug}/admin - the
+    session isn't tied to any single course, so no fresh login is needed."""
+    courses = db.scalars(
+        select(Course).where(Course.lecturer_id == lecturer.id).order_by(Course.created_at)
+    ).all()
+    return templates.TemplateResponse(
+        request, "admin_courses.html", {"lecturer": lecturer, "courses": courses}
+    )
+
+
+@app.get("/admin/courses/new", response_class=HTMLResponse)
+def new_course_form(
+    request: Request,
+    lecturer: Lecturer = Depends(require_account),
+):
+    return templates.TemplateResponse(
+        request, "admin_course_new.html", {"errors": [], "values": {}}
+    )
+
+
+@app.post("/admin/courses/new", response_class=HTMLResponse)
+def new_course(
+    request: Request,
+    slug: str = Form(...),
+    course_code: str = Form(""),
+    course_title: str = Form(""),
+    institution: str = Form(""),
+    lecturer: Lecturer = Depends(require_account),
+    db: Session = Depends(get_db),
+):
+    slug = (slug or "").strip().lower()
+    values = {
+        "slug": slug, "course_code": course_code,
+        "course_title": course_title, "institution": institution,
+    }
+    errors: list[str] = []
+
+    if not _SLUG_RE.match(slug):
+        errors.append(
+            "Course address must be 3-60 characters: lowercase letters, numbers and "
+            "hyphens, not starting or ending with a hyphen."
+        )
+    elif slug in RESERVED_SLUGS:
+        errors.append("That course address is reserved. Choose another.")
+    elif db.scalar(select(Course).where(Course.slug == slug)):
+        errors.append("That course address is already taken.")
+
+    if errors:
+        return templates.TemplateResponse(
+            request, "admin_course_new.html", {"errors": errors, "values": values}, status_code=400
+        )
+
+    course = Course(
+        lecturer_id=lecturer.id,
+        slug=slug,
+        course_code=course_code.strip(),
+        course_title=course_title.strip(),
+        institution=institution.strip(),
+        database_ready=False,
+    )
+    db.add(course)
+    db.commit()
+    logging_service.record_platform(
+        db, "COURSE_CREATED", f"{slug} for {lecturer.email}", lecturer_id=lecturer.id, request=request
+    )
+    return RedirectResponse(f"/{slug}/admin/setup", status_code=303)
 
 
 # ------------------------------------------------------------------------- course-scoped

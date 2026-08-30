@@ -70,15 +70,15 @@ class MailConfig:
     resend_api_key: str
 
 
-def resolve(lecturer=None) -> MailConfig:
+def resolve(course=None) -> MailConfig:
     """A course's own email config, falling back field-by-field to the platform's.
 
-    `lecturer` is an app.models_platform.Lecturer, or None for platform-level mail
-    (there isn't much of that - mostly this is called with a real lecturer). Secrets
+    `course` is an app.models_platform.Course, or None for platform-level mail
+    (there isn't much of that - mostly this is called with a real course). Secrets
     are decrypted here, in-memory, right before use - never stored or logged in the
     clear anywhere else.
     """
-    if lecturer is None:
+    if course is None:
         return MailConfig(
             backend=(settings.mail_backend or "console").lower(),
             mail_from=settings.mail_from,
@@ -94,35 +94,35 @@ def resolve(lecturer=None) -> MailConfig:
     # set and is using the platform default backend, prefer the platform secret values
     # so stale encrypted course secrets do not shadow fresh platform credentials.
     course_uses_own_smtp = bool(
-        lecturer.mail_backend == "smtp"
-        or lecturer.smtp_host
-        or lecturer.smtp_username
-        or lecturer.smtp_port
+        course.mail_backend == "smtp"
+        or course.smtp_host
+        or course.smtp_username
+        or course.smtp_port
     )
 
     smtp_password = ""
-    if course_uses_own_smtp and lecturer.smtp_password_encrypted:
-        smtp_password = decrypt(lecturer.smtp_password_encrypted)
+    if course_uses_own_smtp and course.smtp_password_encrypted:
+        smtp_password = decrypt(course.smtp_password_encrypted)
 
     resend_api_key = ""
-    if lecturer.mail_backend == "resend" and lecturer.resend_api_key_encrypted:
-        resend_api_key = decrypt(lecturer.resend_api_key_encrypted)
+    if course.mail_backend == "resend" and course.resend_api_key_encrypted:
+        resend_api_key = decrypt(course.resend_api_key_encrypted)
 
     return MailConfig(
-        backend=(lecturer.mail_backend or settings.mail_backend or "console").lower(),
-        mail_from=lecturer.mail_from or settings.mail_from,
-        smtp_host=lecturer.smtp_host or settings.smtp_host,
-        smtp_port=lecturer.smtp_port or settings.smtp_port,
-        smtp_username=lecturer.smtp_username or settings.smtp_username,
+        backend=(course.mail_backend or settings.mail_backend or "console").lower(),
+        mail_from=course.mail_from or settings.mail_from,
+        smtp_host=course.smtp_host or settings.smtp_host,
+        smtp_port=course.smtp_port or settings.smtp_port,
+        smtp_username=course.smtp_username or settings.smtp_username,
         smtp_password=smtp_password or settings.smtp_password,
-        smtp_use_tls=(lecturer.smtp_use_tls if course_uses_own_smtp else settings.smtp_use_tls),
+        smtp_use_tls=(course.smtp_use_tls if course_uses_own_smtp else settings.smtp_use_tls),
         resend_api_key=resend_api_key or settings.resend_api_key,
     )
 
 
-def send(message: Message, lecturer=None) -> bool:
+def send(message: Message, course=None) -> bool:
     try:
-        config = resolve(lecturer)
+        config = resolve(course)
         if config.backend == "smtp":
             _send_smtp(message, config)
         elif config.backend == "resend":
@@ -131,7 +131,7 @@ def send(message: Message, lecturer=None) -> bool:
             _send_console(message, config)
         return True
     except Exception as exc:  # never let mail failure break a request
-        config = resolve(lecturer)
+        config = resolve(course)
         print(
             "[mailer] FAILED to send "
             f"to {message.to}: {type(exc).__name__}: {exc} "

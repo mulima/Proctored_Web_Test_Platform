@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}New course &middot; {{ app_name }}{% endblock %}
+{% block nav %}<a href="/admin/courses">My courses</a><a href="/logout">Sign out</a>{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>New course</h1>
+  <p class="muted">Adds another course to your account. You'll connect its own
+  database - already set up with the tables documented at
+  <a href="/docs/DATABASE_SCHEMA.md">/docs/DATABASE_SCHEMA.md</a> - on the next page.</p>
+  {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+  <form method="post" action="/admin/courses/new" autocomplete="off">
+    <label>Course address<input name="slug" value="{{ values.slug or '' }}" placeholder="mbs6012" required>
+      <span class="hint">Lowercase letters, numbers and hyphens. Students will reach this
+      course at {{ base_url }}/&lt;this&gt;/register</span></label>
+    <label>Course code<input name="course_code" value="{{ values.course_code or '' }}" placeholder="MBS6012"></label>
+    <label>Course title<input name="course_title" value="{{ values.course_title or '' }}" placeholder="MBS6012: Digital Marketing"></label>
+    <label>Institution<input name="institution" value="{{ values.institution or '' }}" placeholder="University of Zambia"></label>
+    <button class="primary" type="submit">Create course</button>
+  </form>
+</section>
+{% endblock %}
