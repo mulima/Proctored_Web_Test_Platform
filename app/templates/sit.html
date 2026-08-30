@@ -64,6 +64,13 @@
   <div id="alerts" class="alerts"></div>
 </header>
 
+{% if exam.instructions %}
+<details class="card" id="examInstructions" open>
+  <summary><strong>Instructions to candidates</strong></summary>
+  <div class="prompt">{{ exam.instructions }}</div>
+</details>
+{% endif %}
+
 <section id="questionPage" class="card"></section>
 
 <div class="actions">

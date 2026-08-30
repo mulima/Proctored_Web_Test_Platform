@@ -1146,9 +1146,22 @@ def import_questions(
         )
         added += 1
     for index, item in enumerate(data.get("short_answer") or [], start=1):
+        # Accept either a bare string (the original desktop quiz_data.json shape) or an
+        # object carrying its own title and marks.
+        if isinstance(item, dict):
+            title = str(item.get("title") or "").strip()
+            prompt = str(item.get("prompt") or "").strip()
+            marks = int(item.get("marks") or 0)
+        else:
+            title, prompt, marks = "", str(item).strip(), 0
         db.add(
             Question(
-                exam_id=exam_id, section="B", order_index=index, prompt=str(item).strip(), marks=0
+                exam_id=exam_id,
+                section="B",
+                order_index=index,
+                title=title,
+                prompt=prompt,
+                marks=marks,
             )
         )
         added += 1

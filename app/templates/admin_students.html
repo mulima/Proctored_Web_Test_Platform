@@ -1,0 +1,62 @@
+{% extends "base.html" %}
+{% block title %}All students &middot; {{ app_name }}{% endblock %}
+{% block nav %}<a href="/admin/courses">My courses</a><a href="/logout">Sign out</a>{% endblock %}
+{% block content %}
+<h1>Students across your courses</h1>
+<p class="muted">One tab per course - each is a live read from that course's own
+database, so a slow or unreachable one only affects its own tab, not the others.</p>
+
+{% if not tabs %}
+<section class="card"><p class="muted">No courses yet. <a href="/admin/courses/new">Create one</a>.</p></section>
+{% else %}
+<div class="admin-nav" id="courseTabs">
+  {% for tab in tabs %}
+  <a href="#" onclick="mbsShowStudentTab({{ loop.index0 }}); return false;" id="tabLink{{ loop.index0 }}">
+    {{ tab.course.course_code or tab.course.slug }}{% if tab.status == 'ok' %} ({{ tab.students|length }}){% endif %}
+  </a>
+  {% endfor %}
+</div>
+
+{% for tab in tabs %}
+<section class="card" id="tabPanel{{ loop.index0 }}" {% if not loop.first %}hidden{% endif %}>
+  <h2><code>/{{ tab.course.slug }}</code> <span class="muted">{{ tab.course.course_title }}</span></h2>
+
+  {% if tab.status == 'not_ready' %}
+    <p class="muted">This course hasn't finished setup - no database connected yet.
+    <a href="/{{ tab.course.slug }}/admin/setup">Finish setup</a></p>
+  {% elif tab.status == 'error' %}
+    <ul class="errors"><li>Could not reach this course's database: {{ tab.error }}</li></ul>
+  {% elif not tab.students %}
+    <p class="muted">Nobody has registered yet.</p>
+  {% else %}
+  <div class="scroll"><table>
+    <tr><th>Computer no.</th><th>Name</th><th>Email</th><th>State</th><th>Registered</th></tr>
+    {% for student in tab.students %}
+    <tr>
+      <td>{{ student.computer_number }}</td>
+      <td>{{ student.full_name }}</td>
+      <td>{{ student.email }}</td>
+      <td>
+        {% if student.is_blocked %}<span class="chip bad">BLOCKED</span>
+        {% elif not student.is_verified %}<span class="chip">unconfirmed</span>
+        {% elif not student.is_approved %}<span class="chip">awaiting approval</span>
+        {% else %}<span class="chip ok">ready</span>{% endif %}
+      </td>
+      <td class="muted">{{ student.created_at.strftime('%d %b %H:%M') }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+  <p><a class="button" href="/{{ tab.course.slug }}/admin/students">Manage this course's roster</a></p>
+</section>
+{% endfor %}
+{% endif %}
+
+<script>
+  function mbsShowStudentTab(index) {
+    document.querySelectorAll('[id^="tabPanel"]').forEach(function (el, i) {
+      el.hidden = (i !== index);
+    });
+  }
+</script>
+{% endblock %}

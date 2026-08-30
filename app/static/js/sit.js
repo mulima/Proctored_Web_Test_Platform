@@ -268,7 +268,8 @@
           checked + "> " + letter + ". " + escapeHtml(option) + "</label>";
       }).join("");
     } else if (question.section === "B") {
-      body += "<h2>" + escapeHtml(question.prompt) + "</h2>" +
+      if (question.title) body += "<h2>" + escapeHtml(question.title) + "</h2>";
+      body += '<div class="prompt">' + escapeHtml(question.prompt) + "</div>" +
         '<textarea id="answerBox">' + escapeHtml(question.value || "") + "</textarea>";
     } else {
       body += sectionCSummary();

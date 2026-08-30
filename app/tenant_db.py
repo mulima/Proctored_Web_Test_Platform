@@ -11,13 +11,13 @@ enough for connection-pool pressure across many databases to matter.
 from collections.abc import Iterator
 import re
 
-from sqlalchemy import create_engine, event, text
+from sqlalchemy import create_engine, event, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
 from app.config import normalise_database_url, settings
-from app.models_course import CourseBase
-from app.models_platform import Lecturer
+from app.models_course import CourseBase, Student
+from app.models_platform import Course, Lecturer
 from app.monitoring import notify_operator
 from app.tenant_crypto import decrypt
 
@@ -152,6 +152,54 @@ def probe_course_connection(lecturer: Lecturer) -> str | None:
         # takes effect immediately on the next request.
         forget(lecturer.id)
         return f"{type(exc).__name__}: {str(exc)[:300]}"
+
+
+def fetch_course_students(course: Course, timeout: int = 5) -> list:
+    """Read-only, timeout-bounded student list for one course.
+
+    Used by the cross-course "all my students" dashboard, which opens several
+    courses' databases in a single page load - one slow or unreachable course must
+    not stall the others. Deliberately builds its own short-lived engine rather than
+    reusing the shared cached one from _sessionmaker_for(): a bounded connect
+    timeout only makes sense for this read-only summary view, not for that course's
+    normal, already-working request path elsewhere in the app, so it stays local to
+    this function instead of changing behaviour everywhere.
+    """
+    if course.course_storage_mode == "platform":
+        if not course.platform_db_schema:
+            raise RuntimeError("Course has no platform schema configured yet.")
+        url = settings.sqlalchemy_url
+        kwargs = _engine_kwargs(url, schema=course.platform_db_schema)
+    else:
+        if not course.database_url_encrypted:
+            raise RuntimeError("Course has no database configured yet.")
+        url = normalise_database_url(decrypt(course.database_url_encrypted))
+        kwargs = _engine_kwargs(url)
+
+    if _is_postgres(url):
+        kwargs = dict(kwargs)
+        connect_args = dict(kwargs.get("connect_args") or {})
+        connect_args["connect_timeout"] = timeout
+        kwargs["connect_args"] = connect_args
+
+    engine = create_engine(url, future=True, **kwargs)
+    try:
+        with Session(engine) as session:
+            rows = session.execute(
+                select(
+                    Student.id,
+                    Student.full_name,
+                    Student.email,
+                    Student.computer_number,
+                    Student.is_verified,
+                    Student.is_approved,
+                    Student.is_blocked,
+                    Student.created_at,
+                ).order_by(Student.computer_number)
+            ).all()
+            return list(rows)
+    finally:
+        engine.dispose()
 
 
 def forget(lecturer_id: int) -> None:

@@ -57,8 +57,8 @@ def _send_lecturer_verification_email(db: Session, lecturer: Lecturer, request: 
     link = f"{settings.base_url.rstrip('/')}/verify-lecturer?token={token}"
     body = (
         f"Hello,\n\n"
-        f"A lecturer account was registered on {settings.app_name} for course address "
-        f"/{lecturer.slug}, using this email address.\n\n"
+        f"A lecturer account was registered on {settings.app_name} using this email "
+        "address.\n\n"
         "Confirm the address by opening this link:\n\n"
         f"{link}\n\n"
         f"The link works once and expires in "
@@ -279,14 +279,14 @@ def verify_lecturer(request: Request, token: str = "", db: Session = Depends(get
         return templates.TemplateResponse(
             request,
             "verify_lecturer.html",
-            {"ok": False, "message": "That verification link is not valid.", "slug": ""},
+            {"ok": False, "message": "That verification link is not valid."},
             status_code=400,
         )
     if lecturer.is_verified:
         return templates.TemplateResponse(
             request,
             "verify_lecturer.html",
-            {"ok": True, "message": "This address is already confirmed. You can sign in.", "slug": lecturer.slug},
+            {"ok": True, "message": "This address is already confirmed. You can sign in."},
         )
     if not tokens_match(lecturer.verification_token, token):
         return templates.TemplateResponse(
@@ -295,7 +295,6 @@ def verify_lecturer(request: Request, token: str = "", db: Session = Depends(get
             {
                 "ok": False,
                 "message": "That link has already been used or has been replaced by a newer one.",
-                "slug": "",
             },
             status_code=400,
         )
@@ -313,7 +312,6 @@ def verify_lecturer(request: Request, token: str = "", db: Session = Depends(get
         {
             "ok": True,
             "message": "Your email address is confirmed. You can sign in and set up your course.",
-            "slug": lecturer.slug,
         },
     )
 
@@ -407,6 +405,46 @@ def my_courses(
     ).all()
     return templates.TemplateResponse(
         request, "admin_courses.html", {"lecturer": lecturer, "courses": courses}
+    )
+
+
+@app.get("/admin/students", response_class=HTMLResponse)
+def all_students(
+    request: Request,
+    lecturer: Lecturer = Depends(require_account),
+    db: Session = Depends(get_db),
+):
+    """One tab per course this account owns, each a live read from that course's
+    own database. A course that isn't set up yet, or whose database is currently
+    unreachable, gets a placeholder in its own tab rather than failing the whole
+    page - see tenant_db.fetch_course_students for the bounded-timeout query
+    behind this."""
+    from app.tenant_db import fetch_course_students
+
+    courses = db.scalars(
+        select(Course).where(Course.lecturer_id == lecturer.id).order_by(Course.created_at)
+    ).all()
+
+    tabs = []
+    for course in courses:
+        if not course.database_ready:
+            tabs.append({"course": course, "status": "not_ready", "students": [], "error": ""})
+            continue
+        try:
+            students = fetch_course_students(course)
+            tabs.append({"course": course, "status": "ok", "students": students, "error": ""})
+        except Exception as exc:
+            tabs.append(
+                {
+                    "course": course,
+                    "status": "error",
+                    "students": [],
+                    "error": f"{type(exc).__name__}: {str(exc)[:200]}",
+                }
+            )
+
+    return templates.TemplateResponse(
+        request, "admin_students.html", {"lecturer": lecturer, "tabs": tabs}
     )
 
 
