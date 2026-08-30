@@ -236,6 +236,11 @@ def _send_resend(message: Message, config: MailConfig) -> None:
         headers={
             "Authorization": f"Bearer {config.resend_api_key}",
             "Content-Type": "application/json",
+            # Resend's API sits behind Cloudflare, which blocks urllib's default
+            # "Python-urllib/x.y" User-Agent outright (a 403 with a plain-text
+            # Cloudflare error page, "error code: 1010" - not a Resend API error at
+            # all, so it never even reaches Resend's own logic). Any real UA clears it.
+            "User-Agent": "ClearGrade-Mailer/1.0",
         },
         method="POST",
     )
