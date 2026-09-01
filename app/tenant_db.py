@@ -29,18 +29,51 @@ def _is_postgres(url: str) -> bool:
     return url.startswith("postgresql")
 
 
-def _engine_kwargs(url: str, schema: str | None = None) -> dict:
+def _engine_kwargs(url: str) -> dict:
     if _is_postgres(url):
-        kwargs = {
+        return {
             "pool_pre_ping": True,
             "pool_size": 3,
             "max_overflow": 5,
             "pool_recycle": 900,
         }
-        if schema:
-            kwargs["connect_args"] = {"options": f"-csearch_path={schema}"}
-        return kwargs
     return {"connect_args": {"check_same_thread": False}}
+
+
+def _attach_search_path(engine: Engine, schema: str) -> None:
+    """Forces every new DBAPI connection on this engine to search ONLY the given
+    schema - deliberately no ",public" fallback. A course provisioned in
+    platform-managed storage mode must never silently read or write another
+    course's tables just because its own schema is missing one; a loud failure
+    there is far better than quiet cross-course data exposure.
+
+    This replaces an earlier approach that passed `-csearch_path=<schema>` as a
+    libpq connect option - missing the required space before `search_path`, which
+    libpq silently ignores rather than erroring on. Every connection that was
+    supposed to be schema-scoped was actually just using the database's default
+    search_path (public) the entire time: provision_platform_schema()'s create_all
+    found tables of the same name already sitting in public (from a course
+    connected in "external" mode to this same database) and created nothing in the
+    new schema, and every later query for that course fell straight through to the
+    shared public tables too.
+
+    A second, equally silent bug lived in the first version of *this* replacement:
+    `SET search_path` is transactional in Postgres, and a raw cursor.execute() opens
+    an implicit transaction that's never committed. The moment SQLAlchemy's pool
+    reused that same physical connection for a new checkout - which it always does,
+    issuing a ROLLBACK first as standard pool hygiene - the ROLLBACK undid the SET
+    right along with it. A single ad-hoc `engine.connect()` never reuses a
+    connection, so it looked correctly scoped in isolation; a real `Session` (which
+    has its own transaction lifecycle) exposed it immediately. The explicit
+    dbapi_conn.commit() below is what makes the SET survive that ROLLBACK.
+    """
+
+    @event.listens_for(engine, "connect")
+    def set_search_path(dbapi_conn, connection_record):
+        cursor = dbapi_conn.cursor()
+        cursor.execute(f'SET search_path TO "{schema}"')
+        cursor.close()
+        dbapi_conn.commit()
 
 
 def engine_for_url(raw_url: str) -> Engine:
@@ -57,8 +90,11 @@ def default_platform_schema_name(lecturer: Lecturer) -> str:
 
 
 def provision_platform_schema(schema: str) -> None:
-    """Creates a per-course schema inside the platform database and ensures all
-    course tables exist there.
+    """Creates a per-course schema inside the platform database, creates every
+    course table there, and verifies they actually exist in that schema before
+    returning. Never trust create_all() alone to mean "it worked" - a
+    misconfigured search_path can make it silently create nothing at all (see
+    _attach_search_path's docstring for exactly how that happened here once).
     """
     if not settings.is_postgres:
         raise RuntimeError("Platform-managed course storage requires PostgreSQL.")
@@ -73,11 +109,16 @@ def provision_platform_schema(schema: str) -> None:
     finally:
         admin_engine.dispose()
 
-    schema_engine = create_engine(
-        base_url, future=True, **_engine_kwargs(base_url, schema=schema)
-    )
+    schema_engine = create_engine(base_url, future=True, **_engine_kwargs(base_url))
+    _attach_search_path(schema_engine, schema)
     try:
         CourseBase.metadata.create_all(bind=schema_engine)
+        missing = validate_schema(schema_engine, schema=schema)
+        if missing:
+            raise RuntimeError(
+                f"Provisioning did not create the expected table(s) in {schema!r}: "
+                + ", ".join(missing) + ". Nothing was activated."
+            )
     finally:
         schema_engine.dispose()
 
@@ -92,19 +133,8 @@ def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
                 f"Lecturer {lecturer.slug!r} is set to platform storage but has no schema."
             )
         url = settings.sqlalchemy_url
-        engine = create_engine(
-            url,
-            future=True,
-            **_engine_kwargs(url, schema=lecturer.platform_db_schema),
-        )
-        # SECURITY FIX: Explicitly set search_path on every connection to prevent schema isolation failures
-        # This ensures PostgreSQL connection pool doesn't reuse connections with wrong schema context
-        schema_name = lecturer.platform_db_schema
-        @event.listens_for(engine, "connect")
-        def set_search_path(dbapi_conn, connection_record):
-            cursor = dbapi_conn.cursor()
-            cursor.execute(f"SET search_path TO \"{schema_name}\",public")
-            cursor.close()
+        engine = create_engine(url, future=True, **_engine_kwargs(url))
+        _attach_search_path(engine, lecturer.platform_db_schema)
     else:
         if not lecturer.database_url_encrypted:
             raise RuntimeError(
@@ -169,12 +199,11 @@ def fetch_course_students(course: Course, timeout: int = 5) -> list:
         if not course.platform_db_schema:
             raise RuntimeError("Course has no platform schema configured yet.")
         url = settings.sqlalchemy_url
-        kwargs = _engine_kwargs(url, schema=course.platform_db_schema)
     else:
         if not course.database_url_encrypted:
             raise RuntimeError("Course has no database configured yet.")
         url = normalise_database_url(decrypt(course.database_url_encrypted))
-        kwargs = _engine_kwargs(url)
+    kwargs = _engine_kwargs(url)
 
     if _is_postgres(url):
         kwargs = dict(kwargs)
@@ -183,6 +212,8 @@ def fetch_course_students(course: Course, timeout: int = 5) -> list:
         kwargs["connect_args"] = connect_args
 
     engine = create_engine(url, future=True, **kwargs)
+    if course.course_storage_mode == "platform":
+        _attach_search_path(engine, course.platform_db_schema)
     try:
         with Session(engine) as session:
             rows = session.execute(

@@ -24,7 +24,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app import logging_service, pdf, proctor, vision
-from app.config import settings
+from app.config import normalise_database_url, settings
 from app.db import get_db
 from app.deps import get_course, get_course_db, require_admin, require_admin_ready, templates
 from app.monitoring import repeated_platform_event
@@ -39,7 +39,7 @@ from app.models_course import (
 )
 from app.models_platform import Course, Lecturer
 from app.security import set_session_cookie, verify_password
-from app.tenant_crypto import CredentialEncryptionError, encrypt
+from app.tenant_crypto import CredentialEncryptionError, decrypt, encrypt
 from app.tenant_db import (
     default_platform_schema_name,
     engine_for_url,
@@ -241,6 +241,30 @@ def setup_form(
     )
 
 
+def _database_url_in_use_by_another_course(
+    platform_db: Session, course: Course, candidate_url: str
+) -> bool:
+    """True if some OTHER course's own external database is this same connection
+    string. Decrypts and compares in plaintext rather than comparing the encrypted
+    blobs directly - Fernet encryption isn't deterministic, so two encryptions of
+    the same string never match byte-for-byte."""
+    candidate = normalise_database_url(candidate_url)
+    others = platform_db.scalars(
+        select(Course).where(
+            Course.id != course.id,
+            Course.course_storage_mode == "external",
+            Course.database_url_encrypted.is_not(None),
+        )
+    ).all()
+    for other in others:
+        try:
+            if normalise_database_url(decrypt(other.database_url_encrypted)) == candidate:
+                return True
+        except CredentialEncryptionError:
+            continue
+    return False
+
+
 def _setup_context(course: Course, errors: list[str]) -> dict:
     storage_mode = course.course_storage_mode or "external"
     return {
@@ -312,6 +336,24 @@ def setup_database(
                     + ", ".join(missing)
                     + ". See /docs/DATABASE_SCHEMA.md - this app never creates tables for "
                     "you, only checks for them."
+                )
+            elif normalise_database_url(database_url) == settings.sqlalchemy_url:
+                # The exact failure mode behind the CSC6302/MBS6011 incident, taken one
+                # step further: this would point a course's "own" database at the
+                # platform's own database directly - guaranteed table-name collisions
+                # with lecturers/courses/platform_logs, not just another course.
+                errors.append(
+                    "This connection string points at the platform's own database, not "
+                    "a separate one. Use \"platform-managed\" storage instead, or a "
+                    "genuinely different database."
+                )
+            elif _database_url_in_use_by_another_course(platform_db, course, database_url):
+                # A lecturer pasting the same connection string into two courses is a
+                # different route to the exact same commingled-data incident this
+                # deployment already had once - catch it before it happens again.
+                errors.append(
+                    "This connection string is already connected to another course on "
+                    "this platform. Each course needs its own separate database."
                 )
             else:
                 try:
