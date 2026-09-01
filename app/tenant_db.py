@@ -36,6 +36,14 @@ def _engine_kwargs(url: str) -> dict:
             "pool_size": 3,
             "max_overflow": 5,
             "pool_recycle": 900,
+            # Without this, a lecturer's database going unreachable (paused, network
+            # blip, rotated credentials) hangs a new connection attempt for however
+            # long the OS-level TCP handshake takes - well past any timeout this app
+            # sets itself - and since sync request handlers run in a bounded thread
+            # pool, enough stuck requests for one course's database can start
+            # starving requests for every other course too. 5s is generous for any
+            # database that is actually up.
+            "connect_args": {"connect_timeout": 5},
         }
     return {"connect_args": {"check_same_thread": False}}
 

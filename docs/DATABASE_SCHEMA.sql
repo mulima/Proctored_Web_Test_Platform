@@ -33,6 +33,7 @@ CREATE TABLE exams (
     total_marks INTEGER NOT NULL, 
     section_c_required INTEGER NOT NULL, 
     is_open BOOLEAN NOT NULL, 
+    show_submission_pdf BOOLEAN NOT NULL, 
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL, 
     PRIMARY KEY (id)
 );
@@ -78,10 +79,18 @@ CREATE TABLE attempts (
     last_alert_email_at TIMESTAMP WITHOUT TIME ZONE, 
     pdf_filename VARCHAR(300) NOT NULL, 
     pdf_bytes BYTEA, 
+    reviewed_at TIMESTAMP WITHOUT TIME ZONE, 
+    reviewed_by VARCHAR(255) NOT NULL, 
+    review_notes TEXT NOT NULL, 
+    last_pdf_audit_at TIMESTAMP WITHOUT TIME ZONE, 
+    last_pdf_audit_match BOOLEAN, 
+    last_pdf_audit_stored_sha256 VARCHAR(64) NOT NULL, 
+    last_pdf_audit_current_sha256 VARCHAR(64) NOT NULL, 
+    last_pdf_audit_message TEXT NOT NULL, 
     PRIMARY KEY (id), 
+    CONSTRAINT uq_attempt_exam_student UNIQUE (exam_id, student_id), 
     FOREIGN KEY(exam_id) REFERENCES exams (id), 
-    FOREIGN KEY(student_id) REFERENCES students (id), 
-    CONSTRAINT uq_attempt_exam_student UNIQUE (exam_id, student_id)
+    FOREIGN KEY(student_id) REFERENCES students (id)
 );
 
 CREATE INDEX ix_attempts_exam_id ON attempts (exam_id);
@@ -113,9 +122,9 @@ CREATE TABLE answers (
     selected BOOLEAN NOT NULL, 
     updated_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL, 
     PRIMARY KEY (id), 
+    CONSTRAINT uq_answer_attempt_question UNIQUE (attempt_id, question_id), 
     FOREIGN KEY(attempt_id) REFERENCES attempts (id) ON DELETE CASCADE, 
-    FOREIGN KEY(question_id) REFERENCES questions (id), 
-    CONSTRAINT uq_answer_attempt_question UNIQUE (attempt_id, question_id)
+    FOREIGN KEY(question_id) REFERENCES questions (id)
 );
 
 CREATE INDEX ix_answers_attempt_id ON answers (attempt_id);
@@ -140,6 +149,34 @@ CREATE INDEX ix_incidents_attempt_id ON incidents (attempt_id);
 
 CREATE INDEX ix_incidents_category ON incidents (category);
 
+CREATE TABLE submission_audit_events (
+    id SERIAL NOT NULL, 
+    attempt_id INTEGER NOT NULL, 
+    exam_id INTEGER NOT NULL, 
+    action VARCHAR(30) NOT NULL, 
+    status VARCHAR(20) NOT NULL, 
+    actor VARCHAR(255) NOT NULL, 
+    at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL, 
+    stored_pdf_sha256 VARCHAR(64) NOT NULL, 
+    current_pdf_sha256 VARCHAR(64) NOT NULL, 
+    is_match BOOLEAN, 
+    message TEXT NOT NULL, 
+    payload JSON, 
+    PRIMARY KEY (id), 
+    FOREIGN KEY(attempt_id) REFERENCES attempts (id) ON DELETE CASCADE, 
+    FOREIGN KEY(exam_id) REFERENCES exams (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_submission_audit_events_action ON submission_audit_events (action);
+
+CREATE INDEX ix_submission_audit_events_at ON submission_audit_events (at);
+
+CREATE INDEX ix_submission_audit_events_attempt_id ON submission_audit_events (attempt_id);
+
+CREATE INDEX ix_submission_audit_events_exam_id ON submission_audit_events (exam_id);
+
+CREATE INDEX ix_submission_audit_events_status ON submission_audit_events (status);
+
 CREATE TABLE snapshots (
     id SERIAL NOT NULL, 
     attempt_id INTEGER NOT NULL, 
@@ -160,4 +197,3 @@ CREATE INDEX ix_snapshots_attempt_id ON snapshots (attempt_id);
 CREATE INDEX ix_snapshots_incident_id ON snapshots (incident_id);
 
 COMMIT;
-

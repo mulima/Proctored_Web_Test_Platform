@@ -8,15 +8,35 @@
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block chrome %}
+  {% set nav_content %}{% block nav %}{% endblock %}{% endset %}
   <header class="site">
     <div class="wrap">
       <div class="brand-lockup">
         <a class="brand" href="{{ course_url('/') }}">{{ course().brand }}</a>
         <span class="brand-sub">{{ course().subtitle }}</span>
       </div>
-      <nav>{% block nav %}{% endblock %}</nav>
+      {% if nav_content|trim %}
+      <button type="button" class="nav-toggle" aria-controls="siteNav" aria-expanded="false" aria-label="Menu"
+        onclick="var h=this.closest('header'); var open=h.classList.toggle('nav-open'); this.setAttribute('aria-expanded', open);">
+        <span></span><span></span><span></span>
+      </button>
+      <nav class="site-nav" id="siteNav">{{ nav_content }}</nav>
+      {% endif %}
     </div>
   </header>
+  {% if nav_content|trim %}
+  <script>
+    document.addEventListener('click', function (e) {
+      document.querySelectorAll('header.site.nav-open').forEach(function (h) {
+        if (!h.contains(e.target)) {
+          h.classList.remove('nav-open');
+          var btn = h.querySelector('.nav-toggle');
+          if (btn) { btn.setAttribute('aria-expanded', 'false'); }
+        }
+      });
+    });
+  </script>
+  {% endif %}
   {% endblock %}
   <main class="wrap">{% block content %}{% endblock %}</main>
   <footer class="site"><div class="wrap">

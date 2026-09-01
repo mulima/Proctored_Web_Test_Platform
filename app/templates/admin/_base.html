@@ -1,15 +1,20 @@
 {% extends "base.html" %}
-{% block nav %}<a href="/admin/courses">My courses</a><a href="/admin/students">All students</a><a href="{{ course_url('/admin') }}">Admin</a><a href="/logout">Sign out</a>{% endblock %}
+{% block nav %}
+<span class="nav-label">{{ course().course_code or course().slug }}</span>
+<a href="{{ course_url('/admin') }}">Overview</a>
+<a href="{{ course_url('/admin/students') }}">Students</a>
+<a href="{{ course_url('/admin/attempts') }}">Submissions</a>
+<a href="{{ course_url('/admin/attempts?flagged=1') }}">Flagged</a>
+<a href="{{ course_url('/admin/json-guide') }}">JSON Guide</a>
+<a href="{{ course_url('/admin/logs') }}">Logs</a>
+<a href="{{ course_url('/admin/setup') }}">Setup</a>
+<hr class="nav-sep">
+<span class="nav-label">Account</span>
+<a href="/admin/courses">My courses</a>
+<a href="/admin/students">All students</a>
+<a href="/admin/courses/new">+ New course</a>
+<a href="/logout">Sign out</a>
+{% endblock %}
 {% block content %}
-<div class="admin-nav">
-  <a href="{{ course_url('/admin') }}">Overview</a>
-  <a href="{{ course_url('/admin/students') }}">Students</a>
-  <a href="{{ course_url('/admin/attempts') }}">Submissions</a>
-  <a href="{{ course_url('/admin/attempts?flagged=1') }}">Flagged</a>
-  <a href="{{ course_url('/admin/json-guide') }}">JSON Guide</a>
-  <a href="{{ course_url('/admin/logs') }}">Logs</a>
-  <a href="{{ course_url('/admin/setup') }}">Setup</a>
-  <a href="/admin/courses">My courses</a>
-</div>
 {% block admin_content %}{% endblock %}
 {% endblock %}

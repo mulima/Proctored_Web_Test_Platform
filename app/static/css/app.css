@@ -24,7 +24,7 @@ header.site {
   margin-bottom: 22px;
   box-shadow: 0 8px 20px rgba(24, 52, 66, .05);
 }
-header.site .wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+header.site .wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; position: relative; }
 .brand-lockup {
   display: flex;
   flex-direction: column;
@@ -45,7 +45,64 @@ header.site .wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wr
   font-size: 13px;
   max-width: 38ch;
 }
-header.site nav a { color: var(--teal); text-decoration: none; font-weight: 600; margin-left: 14px; }
+/* Every functional link for the signed-in role lives behind this one button - a
+   single, predictable place to find things, instead of links scattered across the
+   header and the page body. Always shown, desktop and mobile alike. */
+.nav-toggle {
+  appearance: none;
+  border: 1px solid var(--line);
+  background: #fff;
+  border-radius: 8px;
+  width: 40px;
+  height: 36px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+.nav-toggle:hover, .nav-toggle[aria-expanded="true"] { border-color: var(--teal); }
+.nav-toggle span { display: block; width: 18px; height: 2px; background: var(--teal); border-radius: 2px; }
+
+.site-nav {
+  display: none;
+  flex-direction: column;
+  position: absolute;
+  top: 100%;
+  right: 18px;
+  margin-top: 8px;
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 14px 34px rgba(24, 52, 66, .16);
+  padding: 8px;
+  min-width: 230px;
+  z-index: 60;
+}
+header.site.nav-open .site-nav { display: flex; }
+.site-nav a {
+  color: var(--ink);
+  text-decoration: none;
+  font-weight: 600;
+  padding: 9px 10px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.site-nav a:hover { background: var(--panel); color: var(--teal); }
+.site-nav .nav-label {
+  display: block;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--gray);
+  padding: 8px 10px 2px;
+}
+.site-nav .nav-sep { border: none; border-top: 1px solid var(--line); margin: 6px 4px; }
+
 footer.site { margin: 40px 0 24px; color: var(--gray); font-size: 13px; }
 footer.site a { color: var(--gray); }
 
@@ -320,16 +377,10 @@ pre { background: var(--panel); padding: 12px; border-radius: 5px; overflow-x: a
     max-width: none;
   }
 
-  header.site nav {
-    width: 100%;
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin-top: 4px;
-  }
-
-  header.site nav a {
-    margin-left: 0;
+  .site-nav {
+    left: 12px;
+    right: 12px;
+    min-width: 0;
   }
 
   .hero-grid {

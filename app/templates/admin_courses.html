@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% block title %}My courses &middot; {{ app_name }}{% endblock %}
-{% block nav %}<a href="/admin/students">All students</a><a href="/logout">Sign out</a>{% endblock %}
+{% block nav %}<a href="/admin/courses">My courses</a><a href="/admin/students">All students</a><a href="/admin/courses/new">+ New course</a><a href="/logout">Sign out</a>{% endblock %}
 {% block content %}
 <h1>My courses</h1>
 <p class="muted">Signed in as {{ lecturer.email }}. Open any course below - no need to

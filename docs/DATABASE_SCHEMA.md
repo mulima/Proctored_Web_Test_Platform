@@ -59,5 +59,6 @@ never silently drift from what the running app actually expects:
 | `incidents` | The proctoring event log for each attempt |
 | `snapshots` | Evidence images captured when a flag is raised |
 | `app_logs` | This course's durable application log |
+| `submission_audit_events` | Regenerate/compare/review history for each attempt's submission PDF |
 
 Full `CREATE TABLE` statements: [`DATABASE_SCHEMA.sql`](DATABASE_SCHEMA.sql).
