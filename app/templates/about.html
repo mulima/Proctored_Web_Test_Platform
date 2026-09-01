@@ -1,0 +1,33 @@
+{% extends "base.html" %}
+{% block title %}About &middot; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="card">
+  <h1>About ClearGrade</h1>
+  <p>ClearGrade is a proctored online assessment platform built for lecturers who need to
+  run a secure, invigilated test without asking students to install anything beyond a
+  browser. Each course runs on its own database, its own students, and its own settings -
+  one lecturer's exam never shares data with another's, even when they're hosted on the
+  same platform.</p>
+
+  <h2>What it does</h2>
+  <p>Students register, verify their email, and sit a timed paper in a locked-down,
+  full-screen browser window with camera-based proctoring. Every interruption - leaving
+  full screen, losing the camera feed, a flagged incident - is timestamped and logged for
+  the lecturer to review alongside the submission itself, so grading decisions are backed
+  by evidence rather than guesswork.</p>
+
+  <h2>Where it started</h2>
+  <p>ClearGrade began as a course tool at the <strong>University of Zambia (UNZA)</strong>
+  and has since grown into a platform any lecturer can sign up to and configure for their
+  own course, with their own connection details, independent of where it was first built.</p>
+
+  <h2>Built by</h2>
+  <p><strong>Dr Mulima Chibuye</strong><br>
+  University of Zambia<br>
+  <a href="mailto:Mulima.Chibuye@cs.unza.zm">Mulima.Chibuye@cs.unza.zm</a></p>
+
+  <p class="muted">For questions about how a specific course uses this platform - grading,
+  incidents, your submission - contact that course's lecturer first. See the
+  <a href="/privacy">Privacy Policy</a> for how data is handled.</p>
+</section>
+{% endblock %}

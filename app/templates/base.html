@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}{{ course().brand }}{% endblock %}</title>
-  <link rel="stylesheet" href="/static/css/app.css?v=20260823c">
+  <link rel="stylesheet" href="/static/css/app.css?v=20260901a">
 </head>
 <body class="{% block body_class %}{% endblock %}">
   {% block chrome %}
@@ -41,6 +41,7 @@
   <main class="wrap">{% block content %}{% endblock %}</main>
   <footer class="site"><div class="wrap">
     {{ course().footer }} &middot;
+    <a href="/about">About</a> &middot;
     <a href="/privacy">Privacy policy</a> &middot;
     <a href="/data-collection">Data collection</a> &middot;
     <a href="/data-retention">Data retention</a>

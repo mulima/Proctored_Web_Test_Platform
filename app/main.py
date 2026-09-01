@@ -162,6 +162,11 @@ def healthz():
         return {"ok": False, "error": str(exc)[:200]}
 
 
+@app.get("/about", response_class=HTMLResponse)
+def about(request: Request):
+    return templates.TemplateResponse(request, "about.html", {})
+
+
 @app.get("/privacy", response_class=HTMLResponse)
 def privacy(request: Request):
     return templates.TemplateResponse(request, "privacy.html", {})
