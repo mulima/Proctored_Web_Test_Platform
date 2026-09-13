@@ -173,7 +173,7 @@ async def security_headers(request: Request, call_next):
     # After call_next: request.state.course_slug (set by app.deps.get_course, if
     # this request went through it) is only populated by now, and the real
     # status code - including one a route raised via HTTPException - is known.
-    if _should_log_visit(request.url.path):
+    if settings.log_page_visits and _should_log_visit(request.url.path):
         _log_visit(request, response.status_code)
     return response
 

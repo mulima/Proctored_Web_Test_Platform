@@ -24,8 +24,15 @@ def _engine_kwargs() -> dict:
     if settings.is_postgres:
         return {
             "pool_pre_ping": True,  # Railway drops idle connections
-            "pool_size": 5,
-            "max_overflow": 10,
+            # Deliberately below Supabase's session-mode pooler cap (15 clients on the
+            # free tier) rather than equal to it - pool_size(4) + max_overflow(6) = 10
+            # leaves headroom for a deploy's own migration connection, the Supabase
+            # dashboard, or a one-off script, instead of this app alone being able to
+            # claim every available slot. See the 2026-09-13 PLATFORM_DATABASE_FAILURE
+            # incident, where this being sized to exactly match the cap left zero room
+            # for anything else the moment per-request load ticked up.
+            "pool_size": 4,
+            "max_overflow": 6,
             "pool_recycle": 900,
         }
     # SQLite, local development only.

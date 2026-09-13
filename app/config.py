@@ -72,6 +72,18 @@ class Settings(BaseSettings):
     # an earlier MCQ answer, platform-wide, for every course.
     allow_mcq_backtrack: bool = False
 
+    # --- site analytics -------------------------------------------------------
+    # Writes one row to the PLATFORM database per request (see main.py's
+    # _should_log_visit), for /administrator's "site visitations" view.
+    # EMERGENCY 2026-09-13: defaulted off. The platform DB engine's pool_size(5)
+    # + max_overflow(10) already equals Supabase's session-mode pooler cap of 15
+    # with zero headroom; logging a visit on nearly every request across every
+    # course on the platform pushed concurrent connection demand past that cap
+    # and took down the platform DB (PLATFORM_DATABASE_FAILURE) during a live
+    # sitting. Leave off until this moves to a lower-pressure write path
+    # (batched/background, or sampled) - see app/main.py's _log_visit.
+    log_page_visits: bool = False
+
     # Evidence snapshots
     snapshots_enabled: bool = True
     snapshot_max_width: int = 480
