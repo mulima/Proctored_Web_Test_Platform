@@ -286,7 +286,8 @@
 
     el("questionPage").innerHTML = body;
     el("prevBtn").disabled = !canGoPrevious();
-    el("prevBtn").style.visibility = question.section === "A" ? "hidden" : "visible";
+    el("prevBtn").style.visibility =
+      (question.section === "A" && !settings.allow_mcq_backtrack) ? "hidden" : "visible";
     el("nextBtn").disabled = current >= questions.length - 1;
     el("submitBtn").style.display = current >= questions.length - 1 ? "" : "none";
     wireInputs();
@@ -328,9 +329,12 @@
     }
   }
 
-  // Section A is forward-only: once past a multiple-choice question it stays answered.
+  // Section A is forward-only by default: once past a multiple-choice question it
+  // stays answered. settings.allow_mcq_backtrack (server-configured, platform-wide)
+  // lifts that restriction.
   function canGoPrevious() {
     if (current <= 0) return false;
+    if (settings.allow_mcq_backtrack) return true;
     return questions[current].section !== "A" && questions[current - 1].section !== "A";
   }
 

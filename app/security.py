@@ -17,6 +17,12 @@ SESSION_SALT = "exam.session"
 VERIFY_SALT = "exam.verify"
 LECTURER_VERIFY_SALT = "platform.lecturer.verify"
 RESET_SALT = "exam.reset"
+SYSTEM_ADMIN_SALT = "platform.system_admin.session"
+
+# Deliberately its own cookie name, not settings.session_cookie - the system admin
+# sees every lecturer's data, so its session must never share a name/path with a
+# lecturer or student cookie a browser might also be holding in the same tab.
+SYSTEM_ADMIN_COOKIE = "sysadmin_session"
 
 
 def hash_password(password: str) -> str:
@@ -85,6 +91,35 @@ def set_session_cookie(response, *, role: str, id: int, slug: str | None = None)
         secure=settings.base_url.startswith("https"),
         path=f"/{slug}" if slug is not None else "/",
     )
+
+
+def set_system_admin_cookie(response) -> None:
+    token = URLSafeTimedSerializer(settings.secret_key, salt=SYSTEM_ADMIN_SALT).dumps({"role": "system"})
+    response.set_cookie(
+        SYSTEM_ADMIN_COOKIE,
+        token,
+        max_age=settings.session_max_age_seconds,
+        httponly=True,
+        samesite="lax",
+        secure=settings.base_url.startswith("https"),
+        path="/administrator",
+    )
+
+
+def read_system_admin_cookie(token: str | None) -> bool:
+    if not token:
+        return False
+    try:
+        data = URLSafeTimedSerializer(settings.secret_key, salt=SYSTEM_ADMIN_SALT).loads(
+            token, max_age=settings.session_max_age_seconds
+        )
+    except (BadSignature, SignatureExpired):
+        return False
+    return (data or {}).get("role") == "system"
+
+
+def clear_system_admin_cookie(response) -> None:
+    response.delete_cookie(SYSTEM_ADMIN_COOKIE, path="/administrator")
 
 
 def make_verification_token(email: str, slug: str) -> str:

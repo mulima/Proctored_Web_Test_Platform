@@ -18,13 +18,14 @@ from datetime import datetime
 from io import BytesIO, StringIO
 from zipfile import ZIP_DEFLATED, ZipFile
 
-from fastapi import APIRouter, Depends, Form, Request
+from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from sqlalchemy import desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
 from app import logging_service, pdf, proctor, vision
 from app.config import normalise_database_url, settings
+from app.document_convert import DocumentConversionError, convert_to_exam_json, extract_text
 from app.db import get_db
 from app.deps import get_course, get_course_db, require_admin, require_admin_ready, templates
 from app.monitoring import repeated_platform_event
@@ -1233,6 +1234,44 @@ def import_questions(
     return RedirectResponse(
         f"/{course.slug}/admin/exams/{exam_id}?imported={added}", status_code=303
     )
+
+
+@router.post("/exams/{exam_id}/convert-document")
+async def convert_document(
+    exam_id: int,
+    request: Request,
+    file: UploadFile = File(...),
+    course: Course = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    """Upload a born-digital .docx/.pdf paper, get back a JSON draft for the same
+    Bulk import box - never written to the database directly. See
+    app/document_convert.py for why this is text-only and what it refuses."""
+    exam = db.get(Exam, exam_id)
+    if exam is None:
+        return JSONResponse({"ok": False, "error": "Exam not found."}, status_code=404)
+
+    filename = file.filename or ""
+    ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+    if ext not in {"docx", "pdf"}:
+        return JSONResponse(
+            {"ok": False, "error": "Only .docx or .pdf files are supported here."}, status_code=400
+        )
+
+    data = await file.read()
+    if len(data) > 15 * 1024 * 1024:
+        return JSONResponse({"ok": False, "error": "File is too large (max 15MB)."}, status_code=400)
+
+    try:
+        text = extract_text(ext, data)
+        draft, warnings = convert_to_exam_json(text, settings.anthropic_api_key, settings.document_conversion_model)
+    except DocumentConversionError as exc:
+        return JSONResponse({"ok": False, "error": str(exc)}, status_code=422)
+
+    logging_service.record(
+        db, "DOCUMENT_CONVERTED", f"{filename} -> draft for {exam.title}", request=request
+    )
+    return JSONResponse({"ok": True, "draft": draft, "warnings": warnings})
 
 
 # ------------------------------------------------------------------------------ roster

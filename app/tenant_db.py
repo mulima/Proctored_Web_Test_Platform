@@ -11,7 +11,7 @@ enough for connection-pool pressure across many databases to matter.
 from collections.abc import Iterator
 import re
 
-from sqlalchemy import create_engine, event, select, text
+from sqlalchemy import create_engine, event, func, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -192,16 +192,14 @@ def probe_course_connection(lecturer: Lecturer) -> str | None:
         return f"{type(exc).__name__}: {str(exc)[:300]}"
 
 
-def fetch_course_students(course: Course, timeout: int = 5) -> list:
-    """Read-only, timeout-bounded student list for one course.
-
-    Used by the cross-course "all my students" dashboard, which opens several
-    courses' databases in a single page load - one slow or unreachable course must
-    not stall the others. Deliberately builds its own short-lived engine rather than
-    reusing the shared cached one from _sessionmaker_for(): a bounded connect
-    timeout only makes sense for this read-only summary view, not for that course's
-    normal, already-working request path elsewhere in the app, so it stays local to
-    this function instead of changing behaviour everywhere.
+def _short_lived_engine(course: Course, timeout: int) -> Engine:
+    """A throwaway, timeout-bounded engine for a one-off read-only summary query -
+    shared by fetch_course_students and fetch_course_exam_summary, both used by
+    dashboards that open several courses' databases in a single page load, where
+    one slow or unreachable course must not stall the others. Never reuses the
+    shared cached engine from _sessionmaker_for(): a bounded connect timeout only
+    makes sense for this kind of summary view, not that course's normal,
+    already-working request path elsewhere in the app.
     """
     if course.course_storage_mode == "platform":
         if not course.platform_db_schema:
@@ -222,6 +220,13 @@ def fetch_course_students(course: Course, timeout: int = 5) -> list:
     engine = create_engine(url, future=True, **kwargs)
     if course.course_storage_mode == "platform":
         _attach_search_path(engine, course.platform_db_schema)
+    return engine
+
+
+def fetch_course_students(course: Course, timeout: int = 5) -> list:
+    """Read-only, timeout-bounded student list for one course. Used by the
+    cross-course "all my students" dashboard."""
+    engine = _short_lived_engine(course, timeout)
     try:
         with Session(engine) as session:
             rows = session.execute(
@@ -235,6 +240,34 @@ def fetch_course_students(course: Course, timeout: int = 5) -> list:
                     Student.is_blocked,
                     Student.created_at,
                 ).order_by(Student.computer_number)
+            ).all()
+            return list(rows)
+    finally:
+        engine.dispose()
+
+
+def fetch_course_exam_summary(course: Course, timeout: int = 5) -> list:
+    """Read-only, timeout-bounded exam list for one course, each with its question
+    count and total marks - used by the /administrator "exams provided so far"
+    view, which opens every course on the platform in one page load."""
+    from app.models_course import Exam, Question
+
+    engine = _short_lived_engine(course, timeout)
+    try:
+        with Session(engine) as session:
+            rows = session.execute(
+                select(
+                    Exam.id,
+                    Exam.code,
+                    Exam.title,
+                    Exam.is_open,
+                    Exam.total_marks,
+                    Exam.created_at,
+                    func.count(Question.id).label("question_count"),
+                )
+                .outerjoin(Question, Question.exam_id == Exam.id)
+                .group_by(Exam.id)
+                .order_by(Exam.created_at)
             ).all()
             return list(rows)
     finally:

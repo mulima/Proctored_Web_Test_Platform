@@ -11,6 +11,11 @@
     <li><code>long_writeup</code> (Section C)</li>
   </ul>
   <p class="muted">Questions are appended to the current exam. Existing questions are not replaced.</p>
+  <p class="muted">On the exam page, you can paste this JSON directly, drop a
+  <code>.json</code> file to load it into the box, or drop a born-digital
+  <code>.docx</code>/<code>.pdf</code> paper to have it converted to this shape first.
+  A converted paper always lands back in the same box for you to check before
+  clicking Import - nothing is saved until then.</p>
 </section>
 
 <section class="card">
@@ -39,8 +44,16 @@
     }
   ],
   "short_answer": [
-    "Define disintermediation in e-business and give one practical example.",
-    "State two risks of relying on a single online payment provider."
+    {
+      "title": "Disintermediation",
+      "prompt": "Define disintermediation in e-business and give one practical example.",
+      "marks": 5
+    },
+    {
+      "title": "Payment provider risk",
+      "prompt": "State two risks of relying on a single online payment provider.",
+      "marks": 5
+    }
   ],
   "long_writeup": [
     {
@@ -63,7 +76,11 @@
     <li><strong>multiple_choice[].question</strong>: required text prompt.</li>
     <li><strong>multiple_choice[].options</strong>: required list with at least two options.</li>
     <li><strong>multiple_choice[].marks</strong>: optional integer, defaults to 0 if missing.</li>
-    <li><strong>short_answer[]</strong>: each item is plain text prompt.</li>
+    <li><strong>short_answer[].title</strong>: optional heading shown to students.</li>
+    <li><strong>short_answer[].prompt</strong>: required text prompt. A bare string is also
+      accepted in place of an object, for backward compatibility with older exports - it's
+      treated as the prompt with no title and 0 marks.</li>
+    <li><strong>short_answer[].marks</strong>: optional integer, defaults to 0 if missing.</li>
     <li><strong>long_writeup[].title</strong>: optional heading shown to students.</li>
     <li><strong>long_writeup[].prompt</strong>: required long-form question.</li>
     <li><strong>long_writeup[].marks</strong>: optional integer, defaults to 0 if missing.</li>

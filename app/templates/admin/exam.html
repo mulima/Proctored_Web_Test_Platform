@@ -114,13 +114,119 @@
 
 <section class="card">
   <h2>Bulk import</h2>
-  <p class="muted">Paste a <code>quiz_data.json</code> in the same shape the desktop app used:
-  <code>multiple_choice</code>, <code>short_answer</code>, <code>long_writeup</code>.
+  <p class="muted">Paste JSON below, drop a <code>.json</code> file on it, or drop a
+  born-digital <code>.docx</code>/<code>.pdf</code> exam paper to have its questions
+  converted to JSON first. Either way, nothing is imported until you review the text
+  in the box and click Import - a converted paper is a draft, not a finished import.
   Questions are appended, not replaced.</p>
   <p class="muted"><a href="{{ course_url('/admin/json-guide') }}">Open the JSON preparation guide</a></p>
+
+  <div id="importDropZone" class="drop-zone">
+    <p>Drag a <code>.json</code>, <code>.docx</code>, or <code>.pdf</code> file here, or
+    <label class="link-button">browse<input type="file" id="importFileInput" accept=".json,.docx,.pdf" hidden></label>.</p>
+  </div>
+  <div id="importStatus" class="muted" hidden></div>
+  <ul id="importWarnings" class="errors" hidden></ul>
+
   <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/import') }}">
-    <textarea name="payload" style="min-height:160px" placeholder='{"multiple_choice": [...], "short_answer": [...], "long_writeup": [...]}'></textarea>
+    <textarea name="payload" id="importPayload" style="min-height:160px" placeholder='{"multiple_choice": [...], "short_answer": [...], "long_writeup": [...]}'></textarea>
     <button class="primary" type="submit">Import</button>
   </form>
 </section>
+
+<script>
+(() => {
+  const dropZone = document.getElementById("importDropZone");
+  const fileInput = document.getElementById("importFileInput");
+  const payload = document.getElementById("importPayload");
+  const status = document.getElementById("importStatus");
+  const warningsList = document.getElementById("importWarnings");
+  const convertUrl = "{{ course_url('/admin/exams/' ~ exam.id ~ '/convert-document') }}";
+
+  function setStatus(text) {
+    if (!text) { status.hidden = true; status.textContent = ""; return; }
+    status.hidden = false;
+    status.textContent = text;
+  }
+
+  function setWarnings(items) {
+    warningsList.innerHTML = "";
+    if (!items || !items.length) { warningsList.hidden = true; return; }
+    items.forEach((w) => {
+      const li = document.createElement("li");
+      li.textContent = w;
+      warningsList.appendChild(li);
+    });
+    warningsList.hidden = false;
+  }
+
+  function handleJsonFile(file) {
+    const reader = new FileReader();
+    reader.onload = () => {
+      payload.value = reader.result;
+      setStatus(`Loaded ${file.name} - review it below, then click Import.`);
+      setWarnings([]);
+    };
+    reader.onerror = () => setStatus(`Could not read ${file.name}.`);
+    reader.readAsText(file);
+  }
+
+  async function handleDocumentFile(file) {
+    setStatus(`Converting ${file.name}... this can take a moment.`);
+    setWarnings([]);
+    const formData = new FormData();
+    formData.append("file", file);
+    let response;
+    try {
+      response = await fetch(convertUrl, { method: "POST", body: formData });
+    } catch (err) {
+      setStatus(`Could not reach the server to convert ${file.name}.`);
+      return;
+    }
+    let data;
+    try {
+      data = await response.json();
+    } catch (err) {
+      setStatus(`Unexpected response converting ${file.name}.`);
+      return;
+    }
+    if (!data.ok) {
+      setStatus(data.error || `Could not convert ${file.name}.`);
+      return;
+    }
+    payload.value = JSON.stringify(data.draft, null, 2);
+    setStatus(`Converted ${file.name} - this is a draft. Read it below before clicking Import.`);
+    setWarnings(data.warnings);
+  }
+
+  function handleFile(file) {
+    const ext = (file.name.split(".").pop() || "").toLowerCase();
+    if (ext === "json") { handleJsonFile(file); return; }
+    if (ext === "docx" || ext === "pdf") { handleDocumentFile(file); return; }
+    setStatus(`${file.name}: only .json, .docx, or .pdf files are supported here.`);
+  }
+
+  fileInput.addEventListener("change", () => {
+    if (fileInput.files.length) { handleFile(fileInput.files[0]); }
+    fileInput.value = "";
+  });
+
+  ["dragenter", "dragover"].forEach((evt) => {
+    dropZone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropZone.classList.add("drag-active");
+    });
+  });
+  ["dragleave", "drop"].forEach((evt) => {
+    dropZone.addEventListener(evt, (e) => {
+      e.preventDefault();
+      dropZone.classList.remove("drag-active");
+    });
+  });
+  dropZone.addEventListener("drop", (e) => {
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) { handleFile(files[0]); }
+  });
+})();
+</script>
 {% endblock %}

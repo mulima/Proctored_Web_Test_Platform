@@ -25,10 +25,11 @@ from app.db import SessionLocal, engine, get_db
 from app.deps import require_account, templates
 from app.mailer import Message, send
 from app.monitoring import notify_operator
-from app.models_platform import Course, Lecturer
+from app.models_platform import Course, Lecturer, PageVisit
 from app.routers import admin as admin_router
 from app.routers import auth as auth_router
 from app.routers import exam as exam_router
+from app.routers import system_admin as system_admin_router
 from app.security import (
     hash_password,
     make_lecturer_verification_token,
@@ -42,10 +43,52 @@ from app.security import (
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 
 RESERVED_SLUGS = {
-    "admin", "static", "healthz", "privacy", "signup", "login", "logout",
+    "admin", "administrator", "static", "healthz", "privacy", "signup", "login", "logout",
     "register", "verify", "resend", "verify-lecturer", "resend-lecturer",
     "api", "docs", "redoc", "openapi.json",
 }
+
+# Paths that would otherwise flood page_visits with noise rather than genuine
+# audience traffic - static assets, health checks, in-exam AJAX polling (fires
+# every few seconds during a sitting), and the operator's own dashboard.
+_VISIT_LOG_EXCLUDED_PREFIXES = ("/static/", "/docs/", "/administrator", "/healthz")
+_VISIT_LOG_EXCLUDED_SUFFIXES = ("/api/status", "/api/save", "/api/incident")
+
+
+def _should_log_visit(path: str) -> bool:
+    if path.startswith(_VISIT_LOG_EXCLUDED_PREFIXES):
+        return False
+    if path.endswith(_VISIT_LOG_EXCLUDED_SUFFIXES):
+        return False
+    return True
+
+
+def _log_visit(request: Request, status_code: int) -> None:
+    """Best-effort - a write failure here must never affect the response it's
+    describing. Opens its own short-lived session rather than threading one
+    through every route via Depends(), since this needs to run for literally
+    every request, including ones whose own dependencies never touch the
+    platform database at all."""
+    try:
+        from app.deps import client_ip
+
+        session = SessionLocal()
+        try:
+            session.add(
+                PageVisit(
+                    path=request.url.path[:500],
+                    course_slug=getattr(request.state, "course_slug", None) or None,
+                    method=request.method[:10],
+                    status_code=status_code,
+                    ip=client_ip(request)[:64],
+                    user_agent=request.headers.get("user-agent", "")[:400],
+                )
+            )
+            session.commit()
+        finally:
+            session.close()
+    except Exception:
+        pass
 
 
 def _send_lecturer_verification_email(db: Session, lecturer: Lecturer, request: Request) -> bool:
@@ -127,6 +170,11 @@ async def security_headers(request: Request, call_next):
         response.headers.setdefault("Cache-Control", "no-store, private")
         response.headers.setdefault("Pragma", "no-cache")
         response.headers.setdefault("Vary", "Cookie")
+    # After call_next: request.state.course_slug (set by app.deps.get_course, if
+    # this request went through it) is only populated by now, and the real
+    # status code - including one a route raised via HTTPException - is known.
+    if _should_log_visit(request.url.path):
+        _log_visit(request, response.status_code)
     return response
 
 
@@ -509,6 +557,9 @@ def new_course(
         db, "COURSE_CREATED", f"{slug} for {lecturer.email}", lecturer_id=lecturer.id, request=request
     )
     return RedirectResponse(f"/{slug}/admin/setup", status_code=303)
+
+
+app.include_router(system_admin_router.router)
 
 
 # ------------------------------------------------------------------------- course-scoped

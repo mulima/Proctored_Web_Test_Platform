@@ -26,7 +26,7 @@ from app.models_course import Student
 from app import logging_service
 from app.models_platform import Course, Lecturer
 from app.monitoring import repeated_platform_event
-from app.security import read_session_cookie
+from app.security import SYSTEM_ADMIN_COOKIE, read_session_cookie, read_system_admin_cookie
 from app.tenant_db import course_session
 
 templates = Jinja2Templates(
@@ -266,6 +266,18 @@ def require_admin_ready(
     /setup wants. Returns the Course (what nearly every admin route actually
     needs); depend on require_admin too if you also need the account itself."""
     return course
+
+
+def require_system_admin(request: Request) -> None:
+    """Gate for /administrator/* routes other than the login page itself. Its own
+    cookie (SYSTEM_ADMIN_COOKIE), not settings.session_cookie - see
+    security.set_system_admin_cookie for why."""
+    if not read_system_admin_cookie(request.cookies.get(SYSTEM_ADMIN_COOKIE)):
+        raise HTTPException(
+            status_code=status.HTTP_303_SEE_OTHER,
+            headers={"Location": "/administrator"},
+            detail="Sign in required.",
+        )
 
 
 def client_ip(request: Request) -> str:

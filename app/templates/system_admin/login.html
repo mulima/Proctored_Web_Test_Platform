@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}System administrator &middot; {{ app_name }}{% endblock %}
+{% block content %}
+<section class="card narrow">
+  <h1>System administrator</h1>
+  <p class="muted">Platform-wide - not a lecturer or course account.</p>
+  {% if errors %}<ul class="errors">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>{% endif %}
+  <form method="post" action="/administrator">
+    <label>Username<input name="username" autocomplete="username" required></label>
+    <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+    <button class="primary" type="submit">Sign in</button>
+  </form>
+</section>
+{% endblock %}

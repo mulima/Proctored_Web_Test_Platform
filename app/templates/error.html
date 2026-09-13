@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block nav %}{% include "_public_nav.html" %}{% endblock %}
 {% block content %}<section class="card"><h1>Something went wrong</h1>
 <p class="muted">Error {{ status_code }}</p><p>{{ detail }}</p>
 <p><a href="{{ course_url('/') }}">Back to the start</a></p></section>{% endblock %}

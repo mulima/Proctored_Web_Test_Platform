@@ -67,6 +67,10 @@ class Settings(BaseSettings):
     block_shortcut_keys: bool = True
     block_copy_paste: bool = True
     block_context_menu: bool = True
+    # Section A (multiple choice) is forward-only by default - once a candidate moves
+    # past an MCQ it can't be revisited. Flip this on to let them go back and change
+    # an earlier MCQ answer, platform-wide, for every course.
+    allow_mcq_backtrack: bool = False
 
     # Evidence snapshots
     snapshots_enabled: bool = True
@@ -74,6 +78,24 @@ class Settings(BaseSettings):
     snapshot_alert_min_interval_seconds: int = 180
     snapshot_max_per_attempt: int = 40
     server_side_snapshot_recheck: bool = True
+
+    # --- system administrator (platform operator, not any one lecturer) ------
+    # A single operator account, deliberately not a database row - see
+    # app/routers/system_admin.py. Blank disables the /administrator login
+    # entirely rather than accepting any credential. Generate the hash with:
+    #   python -c "from app.security import hash_password; print(hash_password('...'))"
+    system_admin_username: str = ""
+    system_admin_password_hash: str = ""
+
+    # --- document conversion (Bulk import: upload a Word/PDF paper) -----------
+    # Optional. Powers "Bulk import" -> upload a born-digital .docx/.pdf exam
+    # paper and get back a JSON draft to review, instead of typing JSON by hand.
+    # Only the extracted question text (never the file itself, never a scanned
+    # image) is sent to Anthropic's API for this one conversion step. Leave
+    # blank to disable - pasting or uploading JSON directly still works with no
+    # key configured.
+    anthropic_api_key: str = ""
+    document_conversion_model: str = "claude-haiku-4-5-20251001"
 
     # --- misc ---------------------------------------------------------------
     clock_backwards_tolerance_seconds: int = 120

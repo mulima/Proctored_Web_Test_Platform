@@ -1,0 +1,145 @@
+{% extends "base.html" %}
+{% block title %}System overview &middot; {{ app_name }}{% endblock %}
+{% block nav %}<a href="/administrator/dashboard">Overview</a><a href="/administrator/logout">Sign out</a>{% endblock %}
+{% block content %}
+<h1>System overview</h1>
+<p class="muted">Every lecturer and course on this deployment - not scoped to any one account.</p>
+
+<div class="stats">
+  <div class="stat"><div class="n">{{ lecturers|length }}</div><div class="k">lecturer accounts</div></div>
+  <div class="stat"><div class="n">{{ verified_count }}</div><div class="k">email confirmed</div></div>
+  <div class="stat"><div class="n">{{ courses|length }}</div><div class="k">courses</div></div>
+  <div class="stat"><div class="n">{{ ready_count }}</div><div class="k">setup complete</div></div>
+  <div class="stat"><div class="n">{{ total_exams }}</div><div class="k">exams created</div></div>
+  <div class="stat"><div class="n {% if open_exams %}ok{% endif %}">{{ open_exams }}</div><div class="k">open right now</div></div>
+  <div class="stat"><div class="n">{{ total_questions }}</div><div class="k">questions across all exams</div></div>
+  <div class="stat"><div class="n">{{ total_students }}</div><div class="k">registered students</div></div>
+</div>
+
+<section class="card">
+  <h2>Registrations &amp; visitations</h2>
+  <div class="stats">
+    <div class="stat"><div class="n">{{ visits_24h }}</div><div class="k">visits, last 24h</div></div>
+    <div class="stat"><div class="n">{{ visits_30d_count }}</div><div class="k">visits, last 30 days</div></div>
+    <div class="stat"><div class="n">{{ total_visits }}</div><div class="k">visits, all time</div></div>
+    <div class="stat"><div class="n">{{ unique_ips_30d }}</div><div class="k">unique IPs, last 30 days</div></div>
+  </div>
+
+  <h3>Lecturer signups, last 30 days</h3>
+  <div class="spark-bars">
+    {% for day, count in signups_by_day %}
+    <div class="spark-bar" style="height:{{ (count / ((signups_by_day|map(attribute=1)|max) or 1) * 100)|round(1) }}%" title="{{ day }}: {{ count }}"></div>
+    {% endfor %}
+  </div>
+
+  <h3>Site visits, last 30 days</h3>
+  <p class="muted fine">Excludes static assets, health checks, in-exam polling, and this page itself.</p>
+  <div class="spark-bars">
+    {% for day, count in visits_by_day %}
+    <div class="spark-bar" style="height:{{ (count / ((visits_by_day|map(attribute=1)|max) or 1) * 100)|round(1) }}%" title="{{ day }}: {{ count }}"></div>
+    {% endfor %}
+  </div>
+
+  {% if top_paths %}
+  <h3>Most-visited pages, last 30 days</h3>
+  <div class="scroll"><table>
+    <tr><th>Path</th><th>Visits</th></tr>
+    {% for path, count in top_paths %}
+    <tr><td><code>{{ path }}</code></td><td>{{ count }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Courses</h2>
+  <p class="muted">Storage mode: {% for mode, count in by_storage_mode.items() %}{{ mode }} ({{ count }}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+  <div class="scroll"><table>
+    <tr><th>Address</th><th>Course</th><th>Institution</th><th>Owner</th><th>Storage</th><th>State</th><th>Exams</th><th>Students</th><th>Created</th></tr>
+    {% for c in courses %}
+    <tr>
+      <td><code>/{{ c.slug }}</code></td>
+      <td>{{ c.course_code or c.course_title or '&mdash;' }}</td>
+      <td>{{ c.institution }}</td>
+      <td>{{ lecturer_by_id[c.lecturer_id].email if c.lecturer_id in lecturer_by_id else '&mdash;' }}</td>
+      <td>{{ c.course_storage_mode }}</td>
+      <td>
+        {% if not c.database_ready %}<span class="chip">setup incomplete</span>
+        {% elif c.id in exam_errors_by_course %}<span class="chip bad">unreachable</span>
+        {% else %}<span class="chip ok">ready</span>{% endif %}
+      </td>
+      <td>{{ exam_rows_by_course[c.id]|length if c.id in exam_rows_by_course else '&mdash;' }}</td>
+      <td>{{ student_count_by_course[c.id] if c.id in student_count_by_course else '&mdash;' }}</td>
+      <td class="muted">{{ c.created_at.strftime('%d %b %Y') }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Exams provided so far</h2>
+  {% if not total_exams %}
+  <p class="muted">No exams created on this platform yet.</p>
+  {% else %}
+  {% for c in courses %}
+    {% if c.id in exam_rows_by_course and exam_rows_by_course[c.id] %}
+    <h3><code>/{{ c.slug }}</code> <span class="muted">{{ c.course_title or c.course_code }}</span></h3>
+    <div class="scroll"><table>
+      <tr><th>Code</th><th>Title</th><th>Questions</th><th>Total marks</th><th>State</th><th>Created</th></tr>
+      {% for exam in exam_rows_by_course[c.id] %}
+      <tr>
+        <td>{{ exam.code }}</td>
+        <td>{{ exam.title }}</td>
+        <td>{{ exam.question_count }}</td>
+        <td>{{ exam.total_marks }}</td>
+        <td>{% if exam.is_open %}<span class="chip ok">OPEN</span>{% else %}<span class="chip">closed</span>{% endif %}</td>
+        <td class="muted">{{ exam.created_at.strftime('%d %b %Y') }}</td>
+      </tr>
+      {% endfor %}
+    </table></div>
+    {% endif %}
+  {% endfor %}
+  {% endif %}
+  {% if exam_errors_by_course %}
+  <h3>Unreachable</h3>
+  <ul class="errors">
+    {% for c in courses %}
+      {% if c.id in exam_errors_by_course %}
+      <li><code>/{{ c.slug }}</code>: {{ exam_errors_by_course[c.id] }}</li>
+      {% endif %}
+    {% endfor %}
+  </ul>
+  {% endif %}
+</section>
+
+<section class="card">
+  <h2>Lecturer accounts</h2>
+  <div class="scroll"><table>
+    <tr><th>Email</th><th>Verified</th><th>Courses</th><th>Created</th></tr>
+    {% for l in lecturers %}
+    <tr>
+      <td>{{ l.email }}</td>
+      <td>{% if l.is_verified %}<span class="chip ok">yes</span>{% else %}<span class="chip">no</span>{% endif %}</td>
+      <td>{{ l.courses|length }}</td>
+      <td class="muted">{{ l.created_at.strftime('%d %b %Y') }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+
+<section class="card">
+  <h2>Recent platform activity</h2>
+  <p class="muted">Signups, logins, and database-connection events, most recent first.</p>
+  <div class="scroll"><table>
+    <tr><th>When</th><th>Event</th><th>Detail</th><th>IP</th></tr>
+    {% for entry in recent_activity %}
+    <tr class="{% if entry.level == 'ERROR' %}flagged{% endif %}">
+      <td class="muted">{{ entry.at.strftime('%d %b %H:%M') }}</td>
+      <td>{{ entry.event_type }}</td>
+      <td>{{ entry.message }}</td>
+      <td class="muted">{{ entry.ip }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</section>
+{% endblock %}

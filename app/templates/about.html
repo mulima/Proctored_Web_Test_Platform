@@ -1,33 +1,56 @@
 {% extends "base.html" %}
 {% block title %}About &middot; {{ app_name }}{% endblock %}
+{% block nav %}{% include "_public_nav.html" %}{% endblock %}
 {% block content %}
-<section class="card">
-  <h1>About ClearGrade</h1>
-  <p>ClearGrade is a proctored online assessment platform built for lecturers who need to
-  run a secure, invigilated test without asking students to install anything beyond a
-  browser. Each course runs on its own database, its own students, and its own settings -
-  one lecturer's exam never shares data with another's, even when they're hosted on the
-  same platform.</p>
+<section class="card hero-copy">
+  <p class="hero-eyebrow">About the platform</p>
+  <h1 class="product-name">ClearGrade</h1>
+  <p class="product-tagline"><em>Assessment with clarity and integrity.</em></p>
+  <p class="hero-lead">ClearGrade is a proctored online assessment platform built for lecturers
+  who need to run a secure, invigilated test without asking students to install anything
+  beyond a browser. Each course runs on its own database, its own students, and its own
+  settings - one lecturer's exam never shares data with another's, even when they're hosted
+  on the same platform.</p>
+  <div class="hero-actions">
+    <a class="button primary" href="/signup">Set up your own course</a>
+    <a class="button" href="/privacy">What this system records</a>
+  </div>
+</section>
 
+<section class="card">
   <h2>What it does</h2>
   <p>Students register, verify their email, and sit a timed paper in a locked-down,
   full-screen browser window with camera-based proctoring. Every interruption - leaving
   full screen, losing the camera feed, a flagged incident - is timestamped and logged for
   the lecturer to review alongside the submission itself, so grading decisions are backed
   by evidence rather than guesswork.</p>
+</section>
 
+<section class="card">
+  <h2>Your data, isolated</h2>
+  <p>Every course gets its own database connection - a lecturer's own, or one the platform
+  provisions for them. Nothing is pooled or shared across courses, so one lecturer's
+  students, submissions, and proctoring evidence are never visible to another course, even
+  when both run on the same ClearGrade deployment.</p>
+</section>
+
+<section class="card">
   <h2>Where it started</h2>
   <p>ClearGrade began as a course tool at the <strong>University of Zambia (UNZA)</strong>
   and has since grown into a platform any lecturer can sign up to and configure for their
   own course, with their own connection details, independent of where it was first built.</p>
+</section>
 
+<section class="card">
   <h2>Built by</h2>
   <p><strong>Dr Mulima Chibuye</strong><br>
   University of Zambia<br>
   <a href="mailto:Mulima.Chibuye@cs.unza.zm">Mulima.Chibuye@cs.unza.zm</a></p>
-
-  <p class="muted">For questions about how a specific course uses this platform - grading,
-  incidents, your submission - contact that course's lecturer first. See the
-  <a href="/privacy">Privacy Policy</a> for how data is handled.</p>
+  <p class="muted">This address is for questions about the platform itself. For grading,
+  incidents, or anything about a specific submission, contact that course's lecturer first -
+  they hold the records, not this address.</p>
+  <p class="muted">This project is developed openly. If you'd like to review the source
+  before adopting it for your course, reach out at the address above.</p>
+  <p class="fine">See the <a href="/privacy">Privacy Policy</a> for how data is handled.</p>
 </section>
 {% endblock %}

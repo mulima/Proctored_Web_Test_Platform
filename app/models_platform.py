@@ -146,3 +146,27 @@ class PlatformLog(Base):
     ip: Mapped[str] = mapped_column(String(64), default="")
     user_agent: Mapped[str] = mapped_column(String(400), default="")
     payload: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+
+class PageVisit(Base):
+    """One row per page request, for the /administrator analytics view's
+    "visitations" numbers. Written best-effort by main.py's security_headers
+    middleware - a write failure here must never break the actual page it's
+    describing, see that middleware's try/except.
+
+    Deliberately excludes /static/*, /healthz, high-frequency in-exam polling
+    (/api/status, /api/save, /api/incident) and /administrator/* itself (operator
+    activity, not audience traffic) - without that filter this table would mostly
+    be noise, not a visitor count. See main.py's _should_log_visit.
+    """
+
+    __tablename__ = "page_visits"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), index=True)
+    path: Mapped[str] = mapped_column(String(500), default="")
+    course_slug: Mapped[str | None] = mapped_column(String(60), nullable=True, index=True)
+    method: Mapped[str] = mapped_column(String(10), default="GET")
+    status_code: Mapped[int] = mapped_column(Integer, default=0)
+    ip: Mapped[str] = mapped_column(String(64), default="")
+    user_agent: Mapped[str] = mapped_column(String(400), default="")

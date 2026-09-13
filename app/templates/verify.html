@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% block nav %}{% include "_public_nav.html" %}{% endblock %}
 {% block content %}
 <section class="card narrow">
   <h1>{% if ok %}Email confirmed{% else %}Link not valid{% endif %}</h1>

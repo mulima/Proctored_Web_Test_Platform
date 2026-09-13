@@ -1,0 +1,4 @@
+# Dependencies for tools/paper_to_json.py only - deliberately separate from the main
+# app's requirements.txt since this tool never runs as part of the deployed service.
+requests==2.32.3
+pymupdf==1.24.14
