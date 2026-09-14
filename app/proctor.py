@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from sqlalchemy.orm import Session
 
 from app.config import settings
-from app.models_course import Attempt, Incident
+from app.models_course import Attempt, Exam, Incident
 
 # Categories that count towards the strike total. Blocked keystrokes and right-clicks
 # are recorded for the record but do not escalate: they are noise, not evidence.
@@ -151,8 +151,13 @@ def status_payload(attempt: Attempt, now: datetime | None = None) -> dict:
     }
 
 
-def client_settings() -> dict:
-    """Thresholds the browser needs in order to apply the same rules locally."""
+def client_settings(exam: Exam | None = None) -> dict:
+    """Thresholds the browser needs in order to apply the same rules locally.
+
+    allow_backtrack is per-exam (Exam.allow_backtrack_section_a/b/c) - pass the
+    exam whose sitting page this is for. Every other setting here stays
+    platform-wide.
+    """
     return {
         "absence_warn_seconds": settings.absence_warn_seconds,
         "absence_flag_seconds": settings.absence_flag_seconds,
@@ -168,8 +173,8 @@ def client_settings() -> dict:
         "snapshot_max_width": settings.snapshot_max_width,
         "flag_after": settings.strike_flag_after,
         "allow_backtrack": {
-            "A": settings.allow_backtrack_section_a,
-            "B": settings.allow_backtrack_section_b,
-            "C": settings.allow_backtrack_section_c,
+            "A": bool(exam.allow_backtrack_section_a) if exam else False,
+            "B": bool(exam.allow_backtrack_section_b) if exam else True,
+            "C": bool(exam.allow_backtrack_section_c) if exam else True,
         },
     }

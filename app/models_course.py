@@ -83,6 +83,18 @@ class Exam(CourseBase):
     duration_minutes: Mapped[int] = mapped_column(Integer, default=90)
     total_marks: Mapped[int] = mapped_column(Integer, default=100)
     section_c_required: Mapped[int] = mapped_column(Integer, default=2)
+    # Per-exam backtrack control, one flag per section - see app/proctor.py's
+    # client_settings() and app/static/js/sit.js's canGoPrevious() for the rule: a
+    # "Previous" step is allowed only if the section it would land ON allows it.
+    # Defaults reproduce the platform's original, and later platform-wide-flag,
+    # behaviour: A was always forward-only, B and C were always free to revisit.
+    # NEW COLUMNS: every already-connected course database needs these added before
+    # this code is deployed - see docs/DATABASE_SCHEMA.sql and the ALTER TABLE
+    # statement recorded for the 2026-09-14 rollout. A database missing them will
+    # fail every query touching `exams` the moment this code runs against it.
+    allow_backtrack_section_a: Mapped[bool] = mapped_column(Boolean, default=False)
+    allow_backtrack_section_b: Mapped[bool] = mapped_column(Boolean, default=True)
+    allow_backtrack_section_c: Mapped[bool] = mapped_column(Boolean, default=True)
     # Nothing can be sat until an admin opens it. This is the release switch.
     is_open: Mapped[bool] = mapped_column(Boolean, default=False)
     # Existing exams remain visible to students; lecturers can disable this per exam.

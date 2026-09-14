@@ -1034,6 +1034,9 @@ def update_exam(
     section_c_required: int = Form(2),
     instructions: str = Form(""),
     show_submission_pdf: str = Form(""),
+    allow_backtrack_section_a: str = Form(""),
+    allow_backtrack_section_b: str = Form(""),
+    allow_backtrack_section_c: str = Form(""),
     course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
@@ -1046,6 +1049,9 @@ def update_exam(
     exam.section_c_required = max(0, section_c_required)
     exam.instructions = instructions
     exam.show_submission_pdf = bool(show_submission_pdf)
+    exam.allow_backtrack_section_a = bool(allow_backtrack_section_a)
+    exam.allow_backtrack_section_b = bool(allow_backtrack_section_b)
+    exam.allow_backtrack_section_c = bool(allow_backtrack_section_c)
     db.commit()
     logging_service.record(db, "EXAM_UPDATED", exam.title, request=request)
     return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)

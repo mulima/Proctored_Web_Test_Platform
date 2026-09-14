@@ -67,17 +67,11 @@ class Settings(BaseSettings):
     block_shortcut_keys: bool = True
     block_copy_paste: bool = True
     block_context_menu: bool = True
-    # Whether a candidate can navigate backward INTO each section, platform-wide, for
-    # every course. A "Previous" step is allowed only if the section it would land on
-    # allows backtracking - so disabling section A means the earliest reachable
-    # question, once past it, is B's first; disabling C means a candidate can never
-    # step back to an earlier C question (the one exception being the single step
-    # from C's first question back into B, which is governed by B's own flag, not
-    # C's). Defaults reproduce the platform's original behaviour: section A was
-    # always forward-only, B and C were always free to revisit.
-    allow_backtrack_section_a: bool = False
-    allow_backtrack_section_b: bool = True
-    allow_backtrack_section_c: bool = True
+    # Backtrack-per-section is a per-exam setting as of 2026-09-14 - see
+    # Exam.allow_backtrack_section_a/b/c in app/models_course.py and the exam
+    # settings form. There is deliberately no platform-wide fallback env var here
+    # any more; proctor.client_settings() defaults to the original platform
+    # behaviour (A forward-only, B/C free) only when called without an exam.
 
     # --- site analytics -------------------------------------------------------
     # Writes one row to the PLATFORM database per request (see main.py's

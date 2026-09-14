@@ -43,6 +43,18 @@
     <label>Instructions to candidates<textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
     <label><input type="checkbox" name="show_submission_pdf" value="1"{% if exam.show_submission_pdf %} checked{% endif %}>
       Allow students to open their submission PDF</label>
+    <label>Allow going back to review earlier answers
+      <span class="hint">A "Previous" step is only ever blocked by the section it
+      would land ON - so unticking Section A here means once a candidate moves past
+      it, the earliest they can return to is Section B's first question; unticking
+      Section C means they can never step back to an earlier Section C question.</span>
+    </label>
+    <label><input type="checkbox" name="allow_backtrack_section_a" value="1"{% if exam.allow_backtrack_section_a %} checked{% endif %}>
+      Section A (multiple choice)</label>
+    <label><input type="checkbox" name="allow_backtrack_section_b" value="1"{% if exam.allow_backtrack_section_b %} checked{% endif %}>
+      Section B (short answer)</label>
+    <label><input type="checkbox" name="allow_backtrack_section_c" value="1"{% if exam.allow_backtrack_section_c %} checked{% endif %}>
+      Section C (long writeup)</label>
     <button class="primary" type="submit">Save settings</button>
   </form>
 </section>

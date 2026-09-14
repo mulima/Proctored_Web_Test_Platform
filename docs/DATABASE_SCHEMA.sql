@@ -31,8 +31,11 @@ CREATE TABLE exams (
     instructions TEXT NOT NULL, 
     duration_minutes INTEGER NOT NULL, 
     total_marks INTEGER NOT NULL, 
-    section_c_required INTEGER NOT NULL, 
-    is_open BOOLEAN NOT NULL, 
+    section_c_required INTEGER NOT NULL,
+    allow_backtrack_section_a BOOLEAN NOT NULL DEFAULT false,
+    allow_backtrack_section_b BOOLEAN NOT NULL DEFAULT true,
+    allow_backtrack_section_c BOOLEAN NOT NULL DEFAULT true,
+    is_open BOOLEAN NOT NULL,
     show_submission_pdf BOOLEAN NOT NULL, 
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL, 
     PRIMARY KEY (id)

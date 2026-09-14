@@ -149,7 +149,7 @@ def sit(
             "exam": exam,
             "attempt": attempt,
             "questions_json": payload,
-            "settings_json": proctor.client_settings(),
+            "settings_json": proctor.client_settings(exam),
             "remaining": proctor.remaining_seconds(attempt),
             "current_question": attempt.current_question or 0,
         },
