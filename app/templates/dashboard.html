@@ -27,7 +27,7 @@
     <li><strong>{{ exam.total_marks }} marks</strong></li>
     <li>Section C: choose exactly <strong>{{ exam.section_c_required }}</strong> question(s)</li>
   </ul>
-  {% if exam.instructions %}<p>{{ exam.instructions }}</p>{% endif %}
+  {% if exam.instructions %}<div class="prompt markdown">{{ instructions_html }}</div>{% endif %}
 
   <div class="warnbox">
     <h3>Before you start</h3>

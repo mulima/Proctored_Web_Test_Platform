@@ -1,10 +1,13 @@
 """Sitting the test: starting an attempt, saving answers, reporting incidents, submitting."""
 
 import base64
+import html
 from datetime import datetime
 
+import markdown as _markdown
 from fastapi import APIRouter, Body, Depends, Request
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from markupsafe import Markup
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
@@ -17,6 +20,16 @@ from app.models_platform import Course
 from app.security import deadline_from
 
 router = APIRouter()
+
+
+def render_instructions(text: str) -> Markup:
+    """Exam.instructions, rendered as markdown for students - bold, lists, headings,
+    paragraphs. The raw text is HTML-escaped BEFORE it reaches the markdown
+    converter, so markdown syntax still renders but a literal '<' or '&' a lecturer
+    typed (accidentally or otherwise) can never be interpreted as HTML/script by a
+    student's browser - only the tags markdown itself generates are trusted.
+    """
+    return Markup(_markdown.markdown(html.escape(text or "")))
 
 
 def _open_exam(db: Session, course: Course) -> Exam | None:
@@ -61,7 +74,12 @@ def dashboard(
     return templates.TemplateResponse(
         request,
         "dashboard.html",
-        {"student": student, "exam": exam, "attempt": attempt},
+        {
+            "student": student,
+            "exam": exam,
+            "attempt": attempt,
+            "instructions_html": render_instructions(exam.instructions) if exam else None,
+        },
     )
 
 
@@ -152,6 +170,7 @@ def sit(
             "settings_json": proctor.client_settings(exam),
             "remaining": proctor.remaining_seconds(attempt),
             "current_question": attempt.current_question or 0,
+            "instructions_html": render_instructions(exam.instructions),
         },
     )
 

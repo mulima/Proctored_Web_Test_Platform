@@ -40,7 +40,10 @@
     <label>Duration (minutes)<input type="number" name="duration_minutes" value="{{ exam.duration_minutes }}" min="1"></label>
     <label>Total marks<input type="number" name="total_marks" value="{{ exam.total_marks }}"></label>
     <label>Section C questions to choose<input type="number" name="section_c_required" value="{{ exam.section_c_required }}" min="0"></label>
-    <label>Instructions to candidates<textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
+    <label>Instructions to candidates
+      <span class="hint">Markdown is supported: **bold**, *italic*, and a blank line
+      before a list of lines starting with "- " turns it into bullets.</span>
+      <textarea name="instructions" style="min-height:90px">{{ exam.instructions }}</textarea></label>
     <label><input type="checkbox" name="show_submission_pdf" value="1"{% if exam.show_submission_pdf %} checked{% endif %}>
       Allow students to open their submission PDF</label>
     <label>Allow going back to review earlier answers

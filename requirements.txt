@@ -17,6 +17,10 @@ httpx2==2.12.0
 python-docx==1.1.2
 pypdf==5.1.0
 
+# Renders "Instructions to candidates" as markdown for students - see
+# app/routers/exam.py's render_instructions.
+markdown==3.7
+
 # Optional: enables the server-side second opinion on evidence snapshots. The app runs
 # without these; snapshots are simply stored with a verdict of "not_checked".
 onnxruntime==1.20.1

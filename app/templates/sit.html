@@ -67,7 +67,7 @@
 {% if exam.instructions %}
 <details class="card" id="examInstructions" open>
   <summary><strong>Instructions to candidates</strong></summary>
-  <div class="prompt">{{ exam.instructions }}</div>
+  <div class="prompt markdown">{{ instructions_html }}</div>
 </details>
 {% endif %}
 

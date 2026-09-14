@@ -283,6 +283,15 @@ body.sitting main.wrap { max-width: 1000px; padding-bottom: 60px; }
 .option:hover { background: var(--panel); }
 .option input { width: auto; margin-right: 8px; }
 .prompt { white-space: pre-wrap; margin: 12px 0; }
+/* Rendered markdown (exam.instructions) is real HTML, not raw escaped text - override
+   the pre-wrap above so its own paragraphs/lists lay out normally instead of also
+   preserving whitespace inside the generated markup. */
+.prompt.markdown { white-space: normal; }
+.markdown p { margin: 0 0 10px; }
+.markdown ul, .markdown ol { margin: 0 0 10px; padding-left: 22px; }
+.markdown h1, .markdown h2, .markdown h3 { margin: 14px 0 6px; }
+.markdown li { margin: 2px 0; }
+.markdown p:last-child { margin-bottom: 0; }
 .selectbox { display: flex; gap: 10px; align-items: flex-start; border: 2px solid #b8c2ce; border-radius: 6px; padding: 12px; font-weight: 600; }
 .selectbox.selected { border-color: var(--ok); background: #eef7f3; }
 .selectbox input { width: auto; margin-top: 3px; transform: scale(1.2); }
