@@ -214,10 +214,14 @@ h3 { font-size: 16px; margin: 14px 0 6px; }
 }
 
 label { display: block; font-weight: 600; margin: 14px 0 0; }
-input, textarea, select {
+input:not([type="checkbox"]):not([type="radio"]), textarea, select {
   width: 100%; font: inherit; padding: 9px 10px; margin-top: 5px;
   border: 1px solid #cfd6df; border-radius: 5px; background: #fff;
 }
+/* A checkbox/radio inside a <label>...text</label> pair (e.g. admin settings toggles)
+   should sit inline with its text, not stretch to the input rule above's full width
+   and drop to its own line. */
+input[type="checkbox"], input[type="radio"] { width: auto; margin: 0 8px 0 0; vertical-align: middle; }
 textarea { min-height: 220px; resize: vertical; }
 .hint { display: block; font-weight: 400; color: var(--gray); font-size: 13px; margin-top: 3px; }
 
