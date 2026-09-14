@@ -286,8 +286,7 @@
 
     el("questionPage").innerHTML = body;
     el("prevBtn").disabled = !canGoPrevious();
-    el("prevBtn").style.visibility =
-      (question.section === "A" && !settings.allow_mcq_backtrack) ? "hidden" : "visible";
+    el("prevBtn").style.visibility = "visible";
     el("nextBtn").disabled = current >= questions.length - 1;
     el("submitBtn").style.display = current >= questions.length - 1 ? "" : "none";
     wireInputs();
@@ -329,13 +328,18 @@
     }
   }
 
-  // Section A is forward-only by default: once past a multiple-choice question it
-  // stays answered. settings.allow_mcq_backtrack (server-configured, platform-wide)
-  // lifts that restriction.
+  // Per-section backtrack control (server-configured, platform-wide - see
+  // proctor.py's client_settings). A "Previous" step is allowed only if the
+  // question it would land ON belongs to a section that allows backtracking - not
+  // the section being left. That single rule produces both documented behaviours:
+  // stepping back out of a disallowed section stops right at its boundary (the
+  // first question of whatever came before it stays reachable), and stepping back
+  // WITHIN a disallowed section is never possible, since every such step lands on
+  // another question in that same section.
   function canGoPrevious() {
     if (current <= 0) return false;
-    if (settings.allow_mcq_backtrack) return true;
-    return questions[current].section !== "A" && questions[current - 1].section !== "A";
+    const targetSection = questions[current - 1].section;
+    return !!(settings.allow_backtrack && settings.allow_backtrack[targetSection]);
   }
 
   function next() {

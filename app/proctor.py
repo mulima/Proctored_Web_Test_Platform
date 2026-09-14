@@ -167,5 +167,9 @@ def client_settings() -> dict:
         "snapshots_enabled": settings.snapshots_enabled,
         "snapshot_max_width": settings.snapshot_max_width,
         "flag_after": settings.strike_flag_after,
-        "allow_mcq_backtrack": settings.allow_mcq_backtrack,
+        "allow_backtrack": {
+            "A": settings.allow_backtrack_section_a,
+            "B": settings.allow_backtrack_section_b,
+            "C": settings.allow_backtrack_section_c,
+        },
     }
