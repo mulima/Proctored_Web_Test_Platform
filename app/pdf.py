@@ -148,21 +148,51 @@ def build(attempt: Attempt, answers_by_question: dict[int, "object"], course: Co
 
     if section_c:
         story.append(Paragraph("Section C: Long Writeup", heading))
-        submitted_any = False
+
+        # A question counts for display if the candidate either ticked "select this
+        # question" or wrote something for it - a candidate who ran out of time (or
+        # hit this sitting's technical issues) may have written an answer without
+        # remembering to tick the box. Nothing written is worth marking, so it's left
+        # out either way; anything written is shown, selected or not, and the marker's
+        # own judgement decides which count. See the 2026-09-14 request: papers should
+        # never silently drop a written Section C answer just because it wasn't ticked.
+        required = attempt.exam.section_c_required
+        selected_count = sum(
+            1 for q in section_c if getattr(answers_by_question.get(q.id), "selected", False)
+        )
+        included = []
         for question in section_c:
             answer = answers_by_question.get(question.id)
-            if not getattr(answer, "selected", False):
-                continue
-            submitted_any = True
-            story.append(Paragraph(escape(question.title or question.prompt[:80]), heading))
+            is_selected = bool(getattr(answer, "selected", False))
+            has_text = bool((getattr(answer, "value", "") or "").strip())
+            if is_selected or has_text:
+                included.append((question, answer, is_selected))
+
+        if selected_count != required:
+            story.append(
+                Paragraph(
+                    "Section C not selected - scoring best options. The candidate did not "
+                    f"select exactly {required} question(s) as required; every Section C "
+                    "question with a written answer is shown below for the marker to judge.",
+                    small,
+                )
+            )
+            story.append(Spacer(1, 6))
+
+        if not included:
+            story.append(
+                Paragraph("No Section C questions were selected for marking, and none "
+                          "had a written answer.", small)
+            )
+        for question, answer, is_selected in included:
+            label = escape(question.title or question.prompt[:80])
+            if not is_selected:
+                label += " (not ticked as selected - included because text was entered)"
+            story.append(Paragraph(label, heading))
             story.append(Paragraph(escape(question.prompt), small))
             story.append(Spacer(1, 4))
             story.append(Paragraph(escape(getattr(answer, "value", "")), normal))
             story.append(Spacer(1, 12))
-        if not submitted_any:
-            story.append(
-                Paragraph("No Section C questions were selected for marking.", small)
-            )
 
     story.extend(_incident_appendix(attempt, heading, small))
     doc.build(story)
