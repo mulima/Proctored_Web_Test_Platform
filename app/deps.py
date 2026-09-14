@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from fastapi import Depends, HTTPException, Request, status
 from fastapi.templating import Jinja2Templates
 from jinja2 import pass_context
-from sqlalchemy.exc import InterfaceError, OperationalError
+from sqlalchemy.exc import InterfaceError, OperationalError, ProgrammingError
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -27,7 +27,7 @@ from app import logging_service
 from app.models_platform import Course, Lecturer
 from app.monitoring import repeated_platform_event
 from app.security import SYSTEM_ADMIN_COOKIE, read_session_cookie, read_system_admin_cookie
-from app.tenant_db import course_session
+from app.tenant_db import course_session, forget
 
 templates = Jinja2Templates(
     directory=os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
@@ -134,7 +134,13 @@ def get_course_db(course: Course = Depends(require_course_ready)):
         yield from course_session(course)
     except HTTPException:
         raise
-    except (OperationalError, InterfaceError):
+    except (OperationalError, InterfaceError, ProgrammingError):
+        # ProgrammingError (e.g. UndefinedTable) shows up here when a course's storage
+        # mode/schema changed but this process is still holding an engine cached from
+        # before the change - see tenant_db.py's module docstring on cache lifetime.
+        # Evict it so the very next request rebuilds against the current settings
+        # instead of repeating the same failure indefinitely.
+        forget(course.id)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail=(

@@ -33,8 +33,16 @@ def _engine_kwargs(url: str) -> dict:
     if _is_postgres(url):
         return {
             "pool_pre_ping": True,
+            # A platform-managed course's engine points at the SAME Supabase project
+            # as app/db.py's own platform engine (search_path is what separates them,
+            # not the connection) - so this budget is shared with that engine, plus
+            # every other platform-managed course, plus Supabase's own housekeeping.
+            # Kept modest (3+3=6) so one course's tenant engine can't alone crowd out
+            # the platform engine or a second platform-managed course. An
+            # externally-hosted course's own dedicated database has no such
+            # constraint, but there's no cheap way to tell the two apart here.
             "pool_size": 3,
-            "max_overflow": 5,
+            "max_overflow": 3,
             "pool_recycle": 900,
             # Without this, a lecturer's database going unreachable (paused, network
             # blip, rotated credentials) hangs a new connection attempt for however
