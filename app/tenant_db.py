@@ -181,6 +181,15 @@ def _ensure_access_control_schema(session: Session, course: Course) -> None:
     bind = session.get_bind()
     dialect = bind.dialect.name
     column_names = {column["name"] for column in inspect(bind).get_columns("exams")}
+    if "scheduled_start_at" not in column_names:
+        session.execute(text("ALTER TABLE exams ADD COLUMN scheduled_start_at TIMESTAMP"))
+    if "scheduled_start_timezone" not in column_names:
+        session.execute(
+            text(
+                "ALTER TABLE exams ADD COLUMN scheduled_start_timezone "
+                "VARCHAR(64) NOT NULL DEFAULT 'UTC'"
+            )
+        )
     if "access_scope" not in column_names:
         session.execute(
             text(
