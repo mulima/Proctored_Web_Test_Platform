@@ -11,7 +11,7 @@ enough for connection-pool pressure across many databases to matter.
 from collections.abc import Iterator
 import re
 
-from sqlalchemy import create_engine, event, func, select, text
+from sqlalchemy import create_engine, event, func, inspect, select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -23,6 +23,7 @@ from app.tenant_crypto import decrypt
 
 _engines: dict[int, Engine] = {}
 _sessionmakers: dict[int, sessionmaker] = {}
+_access_control_schema_ready: set[int] = set()
 
 
 def _is_postgres(url: str) -> bool:
@@ -165,17 +166,68 @@ def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
     return factory
 
 
-def course_session(lecturer: Lecturer) -> Iterator[Session]:
+def _ensure_access_control_schema(session: Session, course: Course) -> None:
+    """Bring pre-existing course databases forward for selected-student exams.
+
+    Course databases are independently provisioned, so a platform deployment
+    cannot run Alembic against every lecturer's connection string up front.
+    The access-control release must therefore add its two backward-compatible
+    objects before this process issues an Exam query that references them.
+    Existing exams safely retain the default ``all`` access scope.
+    """
+    if course.id in _access_control_schema_ready:
+        return
+
+    bind = session.get_bind()
+    dialect = bind.dialect.name
+    column_names = {column["name"] for column in inspect(bind).get_columns("exams")}
+    if "access_scope" not in column_names:
+        session.execute(
+            text(
+                "ALTER TABLE exams ADD COLUMN access_scope "
+                "VARCHAR(20) NOT NULL DEFAULT 'all'"
+            )
+        )
+
+    if dialect == "postgresql":
+        session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS exam_allowed_students ("
+                "exam_id INTEGER NOT NULL REFERENCES exams(id) ON DELETE CASCADE, "
+                "student_id INTEGER NOT NULL REFERENCES students(id) ON DELETE CASCADE, "
+                "PRIMARY KEY (exam_id, student_id)"
+                ")"
+            )
+        )
+    else:
+        session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS exam_allowed_students ("
+                "exam_id INTEGER NOT NULL, "
+                "student_id INTEGER NOT NULL, "
+                "PRIMARY KEY (exam_id, student_id), "
+                "FOREIGN KEY(exam_id) REFERENCES exams(id) ON DELETE CASCADE, "
+                "FOREIGN KEY(student_id) REFERENCES students(id) ON DELETE CASCADE"
+                ")"
+            )
+        )
+
+    session.commit()
+    _access_control_schema_ready.add(course.id)
+
+
+def course_session(course: Course) -> Iterator[Session]:
     """Same commit/rollback/close shape as app.db.get_db, just bound to
     whichever lecturer's own database this request belongs to."""
-    factory = _sessionmaker_for(lecturer)
+    factory = _sessionmaker_for(course)
     session = factory()
     try:
+        _ensure_access_control_schema(session, course)
         yield session
         session.commit()
     except Exception:
         session.rollback()
-        notify_operator("ClearGrade alert: COURSE_DATABASE_FAILURE", f"A course database request failed for lecturer {lecturer.id}. Check application logs for the exception.")
+        notify_operator("ClearGrade alert: COURSE_DATABASE_FAILURE", f"A course database request failed for course {course.id}. Check application logs for the exception.")
         raise
     finally:
         session.close()
@@ -287,6 +339,7 @@ def forget(lecturer_id: int) -> None:
     database, so the next request doesn't keep talking to the old one."""
     engine = _engines.pop(lecturer_id, None)
     _sessionmakers.pop(lecturer_id, None)
+    _access_control_schema_ready.discard(lecturer_id)
     if engine is not None:
         engine.dispose()
 
