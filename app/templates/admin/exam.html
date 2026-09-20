@@ -13,6 +13,9 @@
 <ul class="errors"><li>Questions cannot be deleted once students have attempted this exam.</li></ul>{% endif %}
 {% if request.query_params.get('error') == 'json' %}
 <ul class="errors"><li>That is not valid JSON.</li></ul>{% endif %}
+{% if request.query_params.get('error') == 'shape' %}
+<ul class="errors"><li>This JSON does not contain supported question sections. Use either
+  multiple_choice/short_answer/long_writeup or a structured sections array.</li></ul>{% endif %}
 {% if request.query_params.get('error') == 'schedule' %}
 <ul class="errors"><li>Could not save the scheduled start - check the date/time and
   timezone. Nothing else on this form was saved either; resubmit once it's fixed.</li></ul>{% endif %}

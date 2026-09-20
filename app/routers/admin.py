@@ -1247,6 +1247,84 @@ def delete_question(
     return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
+def _structured_question_prompt(item: dict) -> str:
+    """Combine case-study context and sub-parts into one markable question.
+
+    The sitting UI stores one response per Question. Structured paper exports can
+    contain a case and several labelled sub-parts, so retain all their wording in
+    the prompt rather than silently dropping it during import.
+    """
+    chunks = []
+    case = str(item.get("case") or "").strip()
+    if case:
+        chunks.append(f"Case:\n{case}")
+    prompt = str(item.get("prompt") or "").strip()
+    if prompt:
+        chunks.append(prompt)
+    for part in item.get("parts") or []:
+        if not isinstance(part, dict):
+            continue
+        label = str(part.get("title") or "").strip()
+        part_prompt = str(part.get("prompt") or "").strip()
+        part_marks = part.get("marks")
+        if not part_prompt:
+            continue
+        suffix = f" ({part_marks} marks)" if part_marks is not None else ""
+        chunks.append(f"{label}{suffix} {part_prompt}".strip())
+    return "\n\n".join(chunks)
+
+
+def _normalise_import_payload(data: dict) -> dict | None:
+    """Accept both the legacy quiz_data shape and structured assessment exports."""
+    if any(key in data for key in ("multiple_choice", "short_answer", "long_writeup")):
+        return data
+
+    sections = data.get("sections")
+    if not isinstance(sections, list):
+        return None
+
+    normalised = {"multiple_choice": [], "short_answer": [], "long_writeup": []}
+    for section in sections:
+        if not isinstance(section, dict):
+            continue
+        name = str(section.get("name") or "").strip().upper()
+        questions = section.get("questions") or []
+        if not isinstance(questions, list):
+            continue
+
+        if name == "A":
+            for item in questions:
+                if not isinstance(item, dict):
+                    continue
+                normalised["multiple_choice"].append(
+                    {
+                        "question": item.get("prompt", ""),
+                        "options": item.get("options", []),
+                        "marks": item.get("marks", 0),
+                    }
+                )
+        elif name in {"B", "C"}:
+            target = "short_answer" if name == "B" else "long_writeup"
+            for item in questions:
+                if not isinstance(item, dict):
+                    continue
+                normalised[target].append(
+                    {
+                        "title": " ".join(
+                            part
+                            for part in (
+                                str(item.get("code") or "").strip(),
+                                str(item.get("title") or "").strip(),
+                            )
+                            if part
+                        ),
+                        "prompt": _structured_question_prompt(item),
+                        "marks": item.get("marks", 0),
+                    }
+                )
+    return normalised
+
+
 @router.post("/exams/{exam_id}/import")
 def import_questions(
     exam_id: int,
@@ -1264,6 +1342,15 @@ def import_questions(
     except json.JSONDecodeError:
         return RedirectResponse(
             f"/{course.slug}/admin/exams/{exam_id}?error=json", status_code=303
+        )
+    if not isinstance(data, dict):
+        return RedirectResponse(
+            f"/{course.slug}/admin/exams/{exam_id}?error=shape", status_code=303
+        )
+    data = _normalise_import_payload(data)
+    if data is None:
+        return RedirectResponse(
+            f"/{course.slug}/admin/exams/{exam_id}?error=shape", status_code=303
         )
 
     added = 0
