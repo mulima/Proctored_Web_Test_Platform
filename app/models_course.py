@@ -67,6 +67,9 @@ class Student(CourseBase):
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     attempts: Mapped[list["Attempt"]] = relationship(back_populates="student")
+    allowed_exams: Mapped[list["Exam"]] = relationship(
+        secondary="exam_allowed_students", back_populates="allowed_students"
+    )
 
     @property
     def can_sit(self) -> bool:
@@ -95,6 +98,22 @@ class Exam(CourseBase):
     allow_backtrack_section_a: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_backtrack_section_b: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_backtrack_section_c: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Scheduled start, optional - see app/timezones.py for the UTC<->local-zone
+    # conversion and app/routers/exam.py for how this gates when a student can
+    # actually start. NULL means no schedule: is_open alone gates starting, exactly
+    # as before this feature existed. Stored as naive UTC, like every other datetime
+    # here (started_at, deadline_at, ...) - scheduled_start_timezone is kept only so
+    # the admin's settings form can redisplay what they originally entered, in the
+    # zone they entered it in, rather than a converted UTC time that reads oddly.
+    # NEW COLUMNS: every already-connected course database needs these added before
+    # this code is deployed - see docs/DATABASE_SCHEMA.sql and the ALTER TABLE
+    # statement recorded for the 2026-09-20 rollout, same rollout discipline as the
+    # 2026-09-14 backtrack columns above.
+    scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    scheduled_start_timezone: Mapped[str] = mapped_column(String(64), default="UTC")
+    # 'all' means every eligible student can sit; 'selected' limits sitting to
+    # the explicit allowlist stored in exam_allowed_students.
+    access_scope: Mapped[str] = mapped_column(String(20), default="all")
     # Nothing can be sat until an admin opens it. This is the release switch.
     is_open: Mapped[bool] = mapped_column(Boolean, default=False)
     # Existing exams remain visible to students; lecturers can disable this per exam.
@@ -105,6 +124,20 @@ class Exam(CourseBase):
         back_populates="exam", cascade="all, delete-orphan", order_by="Question.order_index"
     )
     attempts: Mapped[list["Attempt"]] = relationship(back_populates="exam")
+    allowed_students: Mapped[list["Student"]] = relationship(
+        secondary="exam_allowed_students", back_populates="allowed_exams"
+    )
+
+
+class ExamAllowedStudent(CourseBase):
+    __tablename__ = "exam_allowed_students"
+
+    exam_id: Mapped[int] = mapped_column(
+        ForeignKey("exams.id", ondelete="CASCADE"), primary_key=True
+    )
+    student_id: Mapped[int] = mapped_column(
+        ForeignKey("students.id", ondelete="CASCADE"), primary_key=True
+    )
 
 
 class Question(CourseBase):

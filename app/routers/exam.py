@@ -11,11 +11,19 @@ from markupsafe import Markup
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app import logging_service, pdf, proctor, vision
+from app import logging_service, pdf, proctor, timezones, vision
 from app.config import settings
 from app.deps import get_course_db, require_course_ready, require_student, templates
 from app.mailer import Attachment, Message, send
-from app.models_course import Answer, Attempt, Exam, Question, Snapshot, Student
+from app.models_course import (
+    Answer,
+    Attempt,
+    Exam,
+    ExamAllowedStudent,
+    Question,
+    Snapshot,
+    Student,
+)
 from app.models_platform import Course
 from app.security import deadline_from
 
@@ -48,12 +56,37 @@ def _open_exam(db: Session, course: Course) -> Exam | None:
     )
 
 
+def _start_reached(exam: Exam, now: datetime | None = None) -> bool:
+    """True when a scheduled start is unset, or has arrived. is_open is still the
+    release switch - this only governs the moment WITHIN an open exam that a
+    candidate is actually allowed to click Start, so a lecturer can open the exam
+    in advance without anyone starting early. Checked again server-side in the
+    /start route - never trust the client-side countdown alone."""
+    if exam.scheduled_start_at is None:
+        return True
+    return (now or datetime.utcnow()) >= exam.scheduled_start_at
+
+
 def _answers_map(db: Session, attempt: Attempt) -> dict[int, Answer]:
     return {answer.question_id: answer for answer in attempt.answers}
 
 
 def _questions(exam: Exam) -> list[Question]:
     return sorted(exam.questions, key=lambda q: (q.section, q.order_index))
+
+
+def _student_can_access_exam(db: Session, exam: Exam, student: Student) -> bool:
+    if exam.access_scope != "selected":
+        return True
+    return (
+        db.scalar(
+            select(ExamAllowedStudent).where(
+                ExamAllowedStudent.exam_id == exam.id,
+                ExamAllowedStudent.student_id == student.id,
+            )
+        )
+        is not None
+    )
 
 
 @router.get("/", response_class=HTMLResponse)
@@ -71,6 +104,8 @@ def dashboard(
                 Attempt.exam_id == exam.id, Attempt.student_id == student.id
             )
         )
+    starts_at_reached = _start_reached(exam) if exam else True
+    student_can_access = _student_can_access_exam(db, exam, student) if exam else False
     return templates.TemplateResponse(
         request,
         "dashboard.html",
@@ -79,6 +114,20 @@ def dashboard(
             "exam": exam,
             "attempt": attempt,
             "instructions_html": render_instructions(exam.instructions) if exam else None,
+            "starts_at_reached": starts_at_reached,
+            "student_can_access": student_can_access,
+            "scheduled_start_iso": (
+                exam.scheduled_start_at.isoformat() + "Z"
+                if exam and exam.scheduled_start_at and not starts_at_reached
+                else None
+            ),
+            "scheduled_start_display": (
+                timezones.format_for_display(
+                    exam.scheduled_start_at, exam.scheduled_start_timezone
+                )
+                if exam and exam.scheduled_start_at and not starts_at_reached
+                else None
+            ),
         },
     )
 
@@ -92,6 +141,14 @@ def start(
 ):
     exam = _open_exam(db, course)
     if exam is None:
+        return RedirectResponse(f"/{course.slug}/", status_code=303)
+    if not _student_can_access_exam(db, exam, student):
+        return RedirectResponse(f"/{course.slug}/?error=access", status_code=303)
+    if not _start_reached(exam):
+        # The dashboard's countdown should have hidden the Start button entirely -
+        # reaching here means a stale page, a direct POST, or a clock skew of more
+        # than the poll interval. The server clock is the only one that matters:
+        # bounce back to the dashboard, which re-renders the countdown correctly.
         return RedirectResponse(f"/{course.slug}/", status_code=303)
 
     attempt = db.scalar(

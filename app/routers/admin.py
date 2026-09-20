@@ -17,13 +17,14 @@ import csv
 from datetime import datetime
 from io import BytesIO, StringIO
 from zipfile import ZIP_DEFLATED, ZipFile
+from zoneinfo import ZoneInfoNotFoundError
 
 from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
-from sqlalchemy import desc, func, select
+from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app import logging_service, pdf, proctor, vision
+from app import logging_service, pdf, proctor, timezones, vision
 from app.config import normalise_database_url, settings
 from app.document_convert import DocumentConversionError, convert_to_exam_json, extract_text
 from app.db import get_db
@@ -33,6 +34,7 @@ from app.models_course import (
     AppLog,
     Attempt,
     Exam,
+    ExamAllowedStudent,
     Question,
     Snapshot,
     Student,
@@ -506,6 +508,7 @@ def home(
             "flagged_count": flagged_count,
             "vision_ready": vision.available(),
             "vision_reason": vision.unavailable_reason(),
+            "timezones": timezones.ALL_TIMEZONES,
         },
     )
 
@@ -528,15 +531,29 @@ def create_exam(
     duration_minutes: int = Form(90),
     total_marks: int = Form(100),
     section_c_required: int = Form(2),
+    scheduled_start_local: str = Form(""),
+    scheduled_start_timezone: str = Form("UTC"),
     course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
+    scheduled_start_at = None
+    scheduled_start_local = scheduled_start_local.strip()
+    if scheduled_start_local:
+        try:
+            scheduled_start_at = timezones.local_to_utc(
+                scheduled_start_local, scheduled_start_timezone
+            )
+        except (ValueError, ZoneInfoNotFoundError):
+            return RedirectResponse(f"/{course.slug}/admin?error=schedule", status_code=303)
+
     exam = Exam(
         code=course.course_code,
         title=title.strip(),
         duration_minutes=max(1, duration_minutes),
         total_marks=total_marks,
         section_c_required=max(0, section_c_required),
+        scheduled_start_at=scheduled_start_at,
+        scheduled_start_timezone=scheduled_start_timezone,
         is_open=False,
     )
     db.add(exam)
@@ -556,9 +573,31 @@ def exam_detail(
     if exam is None:
         return RedirectResponse(f"/{course.slug}/admin", status_code=303)
     questions = sorted(exam.questions, key=lambda q: (q.section, q.order_index))
+    students_for_access = db.scalars(
+        select(Student).order_by(Student.full_name.asc(), Student.computer_number.asc())
+    ).all()
+    selected_access_ids = {
+        row.student_id
+        for row in db.scalars(
+            select(ExamAllowedStudent).where(ExamAllowedStudent.exam_id == exam.id)
+        ).all()
+    }
     attempt_count = (
         db.scalar(select(func.count(Attempt.id)).where(Attempt.exam_id == exam.id)) or 0
     )
+    scheduled_start_local_value = ""
+    if exam.scheduled_start_at:
+        try:
+            scheduled_start_local_value = timezones.utc_to_local_input(
+                exam.scheduled_start_at, exam.scheduled_start_timezone
+            )
+        except ZoneInfoNotFoundError:
+            # The zone this exam was scheduled in no longer exists on this system
+            # (an IANA name was retired) - fall back to showing it in UTC rather
+            # than crashing the settings page over a display-only value.
+            scheduled_start_local_value = timezones.utc_to_local_input(
+                exam.scheduled_start_at, "UTC"
+            )
     return templates.TemplateResponse(
         request,
         "admin/exam.html",
@@ -571,6 +610,10 @@ def exam_detail(
                 "C": [q for q in questions if q.section == "C"],
             },
             "attempt_count": attempt_count,
+            "scheduled_start_local_value": scheduled_start_local_value,
+            "timezones": timezones.ALL_TIMEZONES,
+            "students_for_access": students_for_access,
+            "selected_access_ids": selected_access_ids,
         },
     )
 
@@ -1037,12 +1080,33 @@ def update_exam(
     allow_backtrack_section_a: str = Form(""),
     allow_backtrack_section_b: str = Form(""),
     allow_backtrack_section_c: str = Form(""),
+    scheduled_start_local: str = Form(""),
+    scheduled_start_timezone: str = Form("UTC"),
+    access_scope: str = Form("all"),
+    allowed_student_ids: list[int] = Form([]),
     course: Course = Depends(require_admin_ready),
     db: Session = Depends(get_course_db),
 ):
     exam = db.get(Exam, exam_id)
     if exam is None:
         return RedirectResponse(f"/{course.slug}/admin", status_code=303)
+
+    scheduled_start_local = scheduled_start_local.strip()
+    if scheduled_start_local:
+        try:
+            exam.scheduled_start_at = timezones.local_to_utc(
+                scheduled_start_local, scheduled_start_timezone
+            )
+        except (ValueError, ZoneInfoNotFoundError):
+            return RedirectResponse(
+                f"/{course.slug}/admin/exams/{exam_id}?error=schedule", status_code=303
+            )
+        exam.scheduled_start_timezone = scheduled_start_timezone
+    else:
+        # Blank date/time clears the schedule - is_open alone gates starting again,
+        # exactly as before this feature existed.
+        exam.scheduled_start_at = None
+
     exam.title = title.strip()
     exam.duration_minutes = max(1, duration_minutes)
     exam.total_marks = total_marks
@@ -1052,6 +1116,20 @@ def update_exam(
     exam.allow_backtrack_section_a = bool(allow_backtrack_section_a)
     exam.allow_backtrack_section_b = bool(allow_backtrack_section_b)
     exam.allow_backtrack_section_c = bool(allow_backtrack_section_c)
+
+    selected_mode = access_scope == "selected"
+    exam.access_scope = "selected" if selected_mode else "all"
+    db.execute(
+        delete(ExamAllowedStudent).where(ExamAllowedStudent.exam_id == exam.id)
+    )
+    if selected_mode:
+        unique_ids = {student_id for student_id in allowed_student_ids if student_id > 0}
+        existing_ids = set(
+            db.scalars(select(Student.id).where(Student.id.in_(unique_ids))).all()
+        )
+        for student_id in sorted(existing_ids):
+            db.add(ExamAllowedStudent(exam_id=exam.id, student_id=student_id))
+
     db.commit()
     logging_service.record(db, "EXAM_UPDATED", exam.title, request=request)
     return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)

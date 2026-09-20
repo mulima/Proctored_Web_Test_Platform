@@ -20,7 +20,10 @@
   <p><a class="button" href="{{ course_url('/submitted') }}">See your submission</a></p>
 </section>
 {% else %}
-<section class="card">
+<section class="card" id="exam-panel">
+  {% if request.query_params.get('error') == 'access' %}
+  <ul class="errors"><li>You are not currently authorised to start this exam.</li></ul>
+  {% endif %}
   <h2>{{ exam.title }}</h2>
   <ul class="facts">
     <li><strong>{{ exam.duration_minutes }} minutes</strong> from the moment you start</li>
@@ -28,6 +31,14 @@
     <li>Section C: choose exactly <strong>{{ exam.section_c_required }}</strong> question(s)</li>
   </ul>
   {% if exam.instructions %}<div class="prompt markdown">{{ instructions_html }}</div>{% endif %}
+
+  {% if exam and exam.scheduled_start_at and not starts_at_reached %}
+  <div class="warnbox" id="scheduled-start-box" data-start-at="{{ scheduled_start_iso }}">
+    <h3>Test opens in</h3>
+    <p id="scheduled-start-timer" class="timer">--:--:--</p>
+    <p class="muted">Local time: {{ scheduled_start_display }}</p>
+  </div>
+  {% endif %}
 
   <div class="warnbox">
     <h3>Before you start</h3>
@@ -41,17 +52,81 @@
     </ul>
   </div>
 
-  {% if attempt %}
+  {% if not student_can_access %}
+    <p class="notice">This exam is restricted to selected students. Contact your lecturer if
+    you believe you should have access.</p>
+  {% elif attempt %}
     <p class="notice">You have already started this paper. Your timer is still running and
     your answers are saved.</p>
   {% endif %}
+  {% if not student_can_access %}
+  <p class="muted">Start is disabled for your account on this exam.</p>
+  {% elif exam and exam.scheduled_start_at and not starts_at_reached %}
+  <form method="post" action="{{ course_url('/start') }}" style="display:none" id="start-form">
+  {% else %}
   <form method="post" action="{{ course_url('/start') }}">
+  {% endif %}
+  {% if student_can_access %}
     <button class="primary big" type="submit">
       {% if attempt %}Continue the test{% else %}Start the test{% endif %}
     </button>
   </form>
+  {% endif %}
   <p class="muted">The clock starts when you first click Start and does not stop if you close
   the page.</p>
 </section>
 {% endif %}
+<script>
+(() => {
+  const box = document.getElementById('scheduled-start-box');
+  if (!box) return;
+
+  const target = new Date(box.dataset.startAt).getTime();
+  const timer = document.getElementById('scheduled-start-timer');
+  const form = document.getElementById('start-form');
+
+  function formatSeconds(total) {
+    const hours = Math.floor(total / 3600);
+    const minutes = Math.floor((total % 3600) / 60);
+    const seconds = total % 60;
+    return [hours, minutes, seconds].map(v => String(v).padStart(2, '0')).join(':');
+  }
+
+  function update() {
+    const remaining = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+    timer.textContent = formatSeconds(remaining);
+    if (remaining <= 0) {
+      timer.textContent = '00:00:00';
+      if (form) form.style.display = 'block';
+      box.style.display = 'none';
+      return;
+    }
+    window.setTimeout(update, 1000);
+  }
+
+  update();
+
+  const poll = () => {
+    const remaining = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+    if (remaining <= 0) {
+      fetch(window.location.href, { cache: 'no-store' })
+        .then(res => res.text())
+        .then(html => {
+          const doc = new DOMParser().parseFromString(html, 'text/html');
+          const replacement = doc.getElementById('exam-panel');
+          if (replacement) {
+            const current = document.getElementById('exam-panel');
+            current.replaceWith(replacement);
+          } else {
+            window.location.reload();
+          }
+        })
+        .catch(() => window.location.reload());
+      return;
+    }
+    window.setTimeout(poll, 5000);
+  };
+  poll();
+})();
+</script>
 {% endblock %}

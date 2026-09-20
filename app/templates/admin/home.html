@@ -39,6 +39,16 @@
     <label>Duration (minutes)<input type="number" name="duration_minutes" value="90" min="1"></label>
     <label>Total marks<input type="number" name="total_marks" value="100"></label>
     <label>Section C questions to choose<input type="number" name="section_c_required" value="2" min="0"></label>
+    <label>Scheduled start (optional)
+      <input type="datetime-local" name="scheduled_start_local">
+    </label>
+    <label>Scheduled start timezone
+      <select name="scheduled_start_timezone">
+        {% for tz in timezones %}
+        <option value="{{ tz }}"{% if tz == 'UTC' %} selected{% endif %}>{{ tz }}</option>
+        {% endfor %}
+      </select>
+    </label>
     <button class="primary" type="submit">Create exam</button>
   </form>
 </section>

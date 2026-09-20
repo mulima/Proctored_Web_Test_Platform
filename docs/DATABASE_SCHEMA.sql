@@ -35,6 +35,9 @@ CREATE TABLE exams (
     allow_backtrack_section_a BOOLEAN NOT NULL DEFAULT false,
     allow_backtrack_section_b BOOLEAN NOT NULL DEFAULT true,
     allow_backtrack_section_c BOOLEAN NOT NULL DEFAULT true,
+    scheduled_start_at TIMESTAMP WITHOUT TIME ZONE,
+    scheduled_start_timezone VARCHAR(64) NOT NULL DEFAULT 'UTC',
+    access_scope VARCHAR(20) NOT NULL DEFAULT 'all',
     is_open BOOLEAN NOT NULL,
     show_submission_pdf BOOLEAN NOT NULL, 
     created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL, 
@@ -63,6 +66,14 @@ CREATE UNIQUE INDEX ix_students_computer_number ON students (computer_number);
 CREATE UNIQUE INDEX ix_students_email ON students (email);
 
 CREATE INDEX ix_students_verification_token ON students (verification_token);
+
+CREATE TABLE exam_allowed_students (
+    exam_id INTEGER NOT NULL,
+    student_id INTEGER NOT NULL,
+    PRIMARY KEY (exam_id, student_id),
+    FOREIGN KEY(exam_id) REFERENCES exams (id) ON DELETE CASCADE,
+    FOREIGN KEY(student_id) REFERENCES students (id) ON DELETE CASCADE
+);
 
 CREATE TABLE attempts (
     id SERIAL NOT NULL, 

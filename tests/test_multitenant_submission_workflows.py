@@ -26,6 +26,7 @@ from app.models_course import (
     Attempt,
     CourseBase,
     Exam,
+    ExamAllowedStudent,
     Question,
     Student,
     SubmissionAuditEvent,
@@ -348,6 +349,110 @@ def test_student_login_redirects_to_own_dashboard(app_env):
     assert dashboard.status_code == 200
     assert f"Hello, {student.full_name}" in dashboard.text
     assert student.computer_number in dashboard.text
+
+
+def test_creating_exam_accepts_scheduled_start_timezone(app_env):
+    course_path = app_env["tmp_path"] / "schedule_create.sqlite3"
+    course_url = f"sqlite:///{course_path}"
+    with app_env["PlatformSessionLocal"]() as platform_db:
+        lecturer = _create_lecturer(platform_db, slug="schedcreate", course_db_url=course_url)
+    app = __import__("app.main", fromlist=["app"]).app
+    admin_client = TestClient(app, follow_redirects=False)
+    admin_client.cookies.set(settings.session_cookie, make_session_cookie({"role": "admin", "slug": "schedcreate", "id": lecturer.id}), path="/schedcreate")
+
+    response = admin_client.post(
+        "/schedcreate/admin/exams",
+        data={
+            "title": "Scheduled exam",
+            "duration_minutes": "60",
+            "total_marks": "80",
+            "section_c_required": "1",
+            "scheduled_start_local": "2026-09-21T09:30",
+            "scheduled_start_timezone": "Africa/Lusaka",
+        },
+    )
+    assert response.status_code == 303
+    with _make_course_db(course_path)() as db:
+        exam = db.scalar(select(Exam).where(Exam.title == "Scheduled exam"))
+        assert exam is not None
+        assert exam.scheduled_start_timezone == "Africa/Lusaka"
+        assert exam.scheduled_start_at is not None
+        assert exam.scheduled_start_at.hour == 7
+        assert exam.scheduled_start_at.minute == 30
+
+
+def test_exam_can_be_restricted_to_selected_students_only(app_env):
+    course_path = app_env["tmp_path"] / "restricted_access.sqlite3"
+    course_url = f"sqlite:///{course_path}"
+    course_session_factory = _make_course_db(course_path)
+    with app_env["PlatformSessionLocal"]() as platform_db:
+        _create_lecturer(platform_db, slug="restrict", course_db_url=course_url)
+
+    with course_session_factory() as db:
+        exam = Exam(
+            title="Restricted exam",
+            duration_minutes=60,
+            total_marks=100,
+            section_c_required=1,
+            is_open=True,
+            access_scope="selected",
+        )
+        db.add(exam)
+        db.flush()
+        db.add(Question(exam_id=exam.id, section="B", order_index=1, prompt="Describe X"))
+
+        allowed = Student(
+            full_name="Allowed Student",
+            email="allowed@example.com",
+            computer_number="R001",
+            password_hash=hash_password("student-pass"),
+            is_verified=True,
+            is_approved=True,
+        )
+        blocked = Student(
+            full_name="Blocked Student",
+            email="blocked@example.com",
+            computer_number="R002",
+            password_hash=hash_password("student-pass"),
+            is_verified=True,
+            is_approved=True,
+        )
+        db.add_all([allowed, blocked])
+        db.flush()
+        db.add(ExamAllowedStudent(exam_id=exam.id, student_id=allowed.id))
+        db.commit()
+
+        allowed_id = allowed.id
+        blocked_id = blocked.id
+
+    app = __import__("app.main", fromlist=["app"]).app
+    allowed_client = TestClient(app, follow_redirects=False)
+    blocked_client = TestClient(app, follow_redirects=False)
+    _set_student_cookie(allowed_client, slug="restrict", student_id=allowed_id)
+    _set_student_cookie(blocked_client, slug="restrict", student_id=blocked_id)
+
+    blocked_dashboard = blocked_client.get("/restrict/")
+    assert blocked_dashboard.status_code == 200
+    assert "restricted to selected students" in blocked_dashboard.text
+    assert "Start the test" not in blocked_dashboard.text
+
+    blocked_start = blocked_client.post("/restrict/start")
+    assert blocked_start.status_code == 303
+    assert blocked_start.headers["location"] == "/restrict/?error=access"
+
+    allowed_start = allowed_client.post("/restrict/start")
+    assert allowed_start.status_code == 303
+    assert allowed_start.headers["location"] == "/restrict/sit"
+
+    with course_session_factory() as db:
+        blocked_attempt = db.scalar(
+            select(Attempt).where(Attempt.exam_id == exam.id, Attempt.student_id == blocked_id)
+        )
+        allowed_attempt = db.scalar(
+            select(Attempt).where(Attempt.exam_id == exam.id, Attempt.student_id == allowed_id)
+        )
+        assert blocked_attempt is None
+        assert allowed_attempt is not None
 
 
 def test_pdf_visibility_toggle(app_env):
