@@ -23,7 +23,7 @@ from app.tenant_crypto import decrypt
 
 _engines: dict[int, Engine] = {}
 _sessionmakers: dict[int, sessionmaker] = {}
-_access_control_schema_ready: set[int] = set()
+_course_schema_ready: set[int] = set()
 
 
 def _is_postgres(url: str) -> bool:
@@ -166,20 +166,21 @@ def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
     return factory
 
 
-def _ensure_access_control_schema(session: Session, course: Course) -> None:
-    """Bring a pre-existing course database forward to whatever Exam columns/tables
-    the current code expects, without needing a central migration runner - course
+def _ensure_course_schema_current(session: Session, course: Course) -> None:
+    """Bring a pre-existing course database forward to whatever columns/tables the
+    current code expects, without needing a central migration runner - course
     databases are independently provisioned, so a platform deployment cannot run
-    Alembic against every lecturer's connection string up front. Covers every Exam
-    column added since this function was introduced (2026-09-20): the three
+    Alembic against every lecturer's connection string up front. Covers everything
+    added since this function was introduced (2026-09-20, as
+    _ensure_access_control_schema before outgrowing that name): the three
     per-section backtrack flags (rolled out 2026-09-14, before this existed - a
     course that missed that manual pass self-heals here instead), the scheduled-
-    start columns, and the access-control objects. Existing exams safely retain
-    each new column's default. See models_course.py's Exam class: add a column
-    there, extend this function too, or a legacy course just hits "column does
-    not exist" the first time someone touches it.
+    start columns, the access-control objects, and the admin_messages table.
+    Existing rows safely retain each new column's default. See models_course.py:
+    add a column/table there, extend this function too, or a legacy course just
+    hits "column/relation does not exist" the first time someone touches it.
     """
-    if course.id in _access_control_schema_ready:
+    if course.id in _course_schema_ready:
         return
 
     bind = session.get_bind()
@@ -255,8 +256,37 @@ def _ensure_access_control_schema(session: Session, course: Course) -> None:
             )
         )
 
+    if dialect == "postgresql":
+        session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS admin_messages ("
+                "id SERIAL PRIMARY KEY, "
+                "attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE, "
+                "message TEXT NOT NULL, "
+                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "seen_at TIMESTAMP"
+                ")"
+            )
+        )
+    else:
+        session.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS admin_messages ("
+                "id INTEGER PRIMARY KEY AUTOINCREMENT, "
+                "attempt_id INTEGER NOT NULL, "
+                "message TEXT NOT NULL, "
+                "created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP, "
+                "seen_at TIMESTAMP, "
+                "FOREIGN KEY(attempt_id) REFERENCES attempts(id) ON DELETE CASCADE"
+                ")"
+            )
+        )
+    session.execute(
+        text("CREATE INDEX IF NOT EXISTS ix_admin_messages_attempt_id ON admin_messages (attempt_id)")
+    )
+
     session.commit()
-    _access_control_schema_ready.add(course.id)
+    _course_schema_ready.add(course.id)
 
 
 def course_session(course: Course) -> Iterator[Session]:
@@ -265,7 +295,7 @@ def course_session(course: Course) -> Iterator[Session]:
     factory = _sessionmaker_for(course)
     session = factory()
     try:
-        _ensure_access_control_schema(session, course)
+        _ensure_course_schema_current(session, course)
         yield session
         session.commit()
     except Exception:
@@ -382,7 +412,7 @@ def forget(lecturer_id: int) -> None:
     database, so the next request doesn't keep talking to the old one."""
     engine = _engines.pop(lecturer_id, None)
     _sessionmakers.pop(lecturer_id, None)
-    _access_control_schema_ready.discard(lecturer_id)
+    _course_schema_ready.discard(lecturer_id)
     if engine is not None:
         engine.dispose()
 

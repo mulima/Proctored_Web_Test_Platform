@@ -56,6 +56,7 @@ never silently drift from what the running app actually expects:
 | `exam_allowed_students` | Junction table listing which students may start an exam when that exam uses selected-students access |
 | `questions` | Section A/B/C questions belonging to an exam |
 | `attempts` | One row per student per exam sitting: timing, lock state, strike count, the stored submission PDF |
+| `admin_messages` | Short "nudge" messages the invigilator sends to one candidate mid-sitting |
 | `answers` | One row per question a student has answered or selected |
 | `incidents` | The proctoring event log for each attempt |
 | `snapshots` | Evidence images captured when a flag is raised |

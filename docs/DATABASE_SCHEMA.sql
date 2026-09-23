@@ -111,6 +111,18 @@ CREATE INDEX ix_attempts_exam_id ON attempts (exam_id);
 
 CREATE INDEX ix_attempts_student_id ON attempts (student_id);
 
+CREATE TABLE admin_messages (
+    id SERIAL NOT NULL,
+    attempt_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    created_at TIMESTAMP WITHOUT TIME ZONE DEFAULT (CURRENT_TIMESTAMP) NOT NULL,
+    seen_at TIMESTAMP WITHOUT TIME ZONE,
+    PRIMARY KEY (id),
+    FOREIGN KEY(attempt_id) REFERENCES attempts (id) ON DELETE CASCADE
+);
+
+CREATE INDEX ix_admin_messages_attempt_id ON admin_messages (attempt_id);
+
 CREATE TABLE questions (
     id SERIAL NOT NULL, 
     exam_id INTEGER NOT NULL, 

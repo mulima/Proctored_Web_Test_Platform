@@ -22,6 +22,7 @@ from app import pdf
 from app.config import settings
 from app.db import Base
 from app.models_course import (
+    AdminMessage,
     Answer,
     Attempt,
     CourseBase,
@@ -391,6 +392,73 @@ def test_creating_exam_accepts_scheduled_start_timezone(app_env):
         assert exam.scheduled_start_at is not None
         assert exam.scheduled_start_at.hour == 7
         assert exam.scheduled_start_at.minute == 30
+
+
+def test_admin_nudge_is_delivered_once_on_next_status_poll(app_env):
+    course_path = app_env["tmp_path"] / "nudge.sqlite3"
+    course_url = f"sqlite:///{course_path}"
+    course_session_factory = _make_course_db(course_path)
+    with app_env["PlatformSessionLocal"]() as platform_db:
+        lecturer = _create_lecturer(platform_db, slug="nudge", course_db_url=course_url)
+
+    exam_id, student_ids, attempt_ids = _seed_exam_with_attempts(
+        course_session_factory, student_count=1, submitted=False
+    )
+
+    app = __import__("app.main", fromlist=["app"]).app
+    admin_client = TestClient(app, follow_redirects=False)
+    _set_admin_cookie(admin_client, slug="nudge", lecturer_id=lecturer.id)
+    student_client = TestClient(app, follow_redirects=False)
+    _set_student_cookie(student_client, slug="nudge", student_id=student_ids[0])
+
+    response = admin_client.post(
+        "/nudge/admin/exams/{}/nudge".format(exam_id),
+        data={"student_id": student_ids[0], "message": "Please face your camera"},
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/nudge/admin/exams/{}".format(exam_id)
+
+    with course_session_factory() as db:
+        stored = db.scalar(select(AdminMessage).where(AdminMessage.attempt_id == attempt_ids[0]))
+        assert stored is not None
+        assert stored.message == "Please face your camera"
+        assert stored.seen_at is None
+
+    first_poll = student_client.get("/nudge/api/status")
+    assert first_poll.status_code == 200
+    assert first_poll.json()["nudges"] == ["Please face your camera"]
+
+    second_poll = student_client.get("/nudge/api/status")
+    assert second_poll.status_code == 200
+    assert second_poll.json()["nudges"] == []
+
+    with course_session_factory() as db:
+        stored = db.scalar(select(AdminMessage).where(AdminMessage.attempt_id == attempt_ids[0]))
+        assert stored.seen_at is not None
+
+
+def test_nudge_to_student_with_no_attempt_is_rejected(app_env):
+    course_path = app_env["tmp_path"] / "nudge_reject.sqlite3"
+    course_url = f"sqlite:///{course_path}"
+    course_session_factory = _make_course_db(course_path)
+    with app_env["PlatformSessionLocal"]() as platform_db:
+        lecturer = _create_lecturer(platform_db, slug="nudgereject", course_db_url=course_url)
+
+    exam_id, _, _ = _seed_exam_with_attempts(course_session_factory, student_count=1, submitted=False)
+
+    app = __import__("app.main", fromlist=["app"]).app
+    admin_client = TestClient(app, follow_redirects=False)
+    _set_admin_cookie(admin_client, slug="nudgereject", lecturer_id=lecturer.id)
+
+    response = admin_client.post(
+        "/nudgereject/admin/exams/{}/nudge".format(exam_id),
+        data={"student_id": 999999, "message": "Hello?"},
+    )
+    assert response.status_code == 303
+    assert response.headers["location"] == "/nudgereject/admin/exams/{}?error=nudge".format(exam_id)
+
+    with course_session_factory() as db:
+        assert db.scalar(select(AdminMessage)) is None
 
 
 def test_exam_can_be_restricted_to_selected_students_only(app_env):

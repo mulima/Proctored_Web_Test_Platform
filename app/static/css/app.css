@@ -257,6 +257,8 @@ tr.flagged td { background: #fff4f1; }
 .chip.ok { border-color: var(--ok); color: var(--ok); }
 .chip.bad { border-color: var(--bad); color: var(--bad); background: #fff4f1; }
 .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+.live-feed-entry { padding: 7px 4px; border-bottom: 1px solid var(--panel); font-size: 14px; }
+.live-feed-entry:last-child { border-bottom: none; }
 
 /* ------------------------------------------------------------------ sitting page */
 

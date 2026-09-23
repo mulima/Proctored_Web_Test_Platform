@@ -11,6 +11,7 @@ tied to a course, so simply visiting a different owned course's /{slug}/admin/..
 passes the ownership check in require_admin without a fresh login.
 """
 
+import asyncio
 import json
 import hashlib
 import csv
@@ -19,18 +20,19 @@ from io import BytesIO, StringIO
 from zipfile import ZIP_DEFLATED, ZipFile
 from zoneinfo import ZoneInfoNotFoundError
 
-from fastapi import APIRouter, Depends, File, Form, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from sqlalchemy import delete, desc, func, select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app import logging_service, pdf, proctor, timezones, vision
+from app import live_events, logging_service, pdf, proctor, timezones, vision
 from app.config import normalise_database_url, settings
 from app.document_convert import DocumentConversionError, convert_to_exam_json, extract_text
-from app.db import get_db
-from app.deps import get_course, get_course_db, require_admin, require_admin_ready, templates
+from app.db import SessionLocal, get_db
+from app.deps import current_admin, get_course, get_course_db, require_admin, require_admin_ready, templates
 from app.monitoring import repeated_platform_event
 from app.models_course import (
+    AdminMessage,
     AppLog,
     Attempt,
     Exam,
@@ -585,6 +587,12 @@ def exam_detail(
     attempt_count = (
         db.scalar(select(func.count(Attempt.id)).where(Attempt.exam_id == exam.id)) or 0
     )
+    attempts_in_progress = db.execute(
+        select(Attempt, Student)
+        .join(Student, Student.id == Attempt.student_id)
+        .where(Attempt.exam_id == exam.id, Attempt.is_locked.is_(False))
+        .order_by(Student.full_name.asc())
+    ).all()
     scheduled_start_local_value = ""
     if exam.scheduled_start_at:
         try:
@@ -610,12 +618,106 @@ def exam_detail(
                 "C": [q for q in questions if q.section == "C"],
             },
             "attempt_count": attempt_count,
+            "attempts_in_progress": attempts_in_progress,
             "scheduled_start_local_value": scheduled_start_local_value,
             "timezones": timezones.ALL_TIMEZONES,
             "students_for_access": students_for_access,
             "selected_access_ids": selected_access_ids,
         },
     )
+
+
+@router.get("/exams/{exam_id}/events")
+async def exam_events_stream(exam_id: int, request: Request, slug: str):
+    """Live incident feed for one exam, pushed as Server-Sent Events - see
+    app/live_events.py. Deliberately does NOT use Depends(require_admin_ready):
+    that dependency's platform-DB session (app.db.get_db) stays open for as long
+    as FastAPI considers the request "in progress", which for a StreamingResponse
+    is the entire connection - potentially the whole exam, one platform-DB
+    connection held for nothing while just idly relaying in-memory events. Auth is
+    checked once up front with its own short-lived session, closed before the
+    stream starts; nothing after that touches a database at all.
+    """
+    with SessionLocal() as platform_db:
+        course = get_course(request, slug, platform_db)
+        admin = current_admin(request, course, platform_db)
+        if admin is None:
+            raise HTTPException(
+                status_code=status.HTTP_303_SEE_OTHER,
+                headers={"Location": f"/{slug}/admin/login"},
+            )
+        if not course.database_ready:
+            raise HTTPException(
+                status_code=status.HTTP_303_SEE_OTHER,
+                headers={"Location": f"/{slug}/admin/setup"},
+            )
+
+    async def event_stream():
+        queue = live_events.subscribe(slug, exam_id)
+        try:
+            yield "retry: 3000\n\n"
+            while True:
+                if await request.is_disconnected():
+                    break
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=15)
+                    yield f"data: {json.dumps(event)}\n\n"
+                except asyncio.TimeoutError:
+                    yield ": keep-alive\n\n"
+        finally:
+            live_events.unsubscribe(slug, exam_id, queue)
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@router.post("/exams/{exam_id}/nudge")
+def send_nudge(
+    exam_id: int,
+    request: Request,
+    student_id: int = Form(...),
+    message: str = Form(...),
+    course: Course = Depends(require_admin_ready),
+    db: Session = Depends(get_course_db),
+):
+    """Sends one short on-screen message to a specific candidate mid-sitting -
+    persisted (AdminMessage) and delivered on that candidate's next status poll
+    (app/routers/exam.py's /api/status), not a live push to the student side: the
+    existing 5-second poll is already there, reusing it avoids adding a second kind
+    of long-lived connection per student for what doesn't need sub-second delivery.
+    """
+    message = message.strip()
+    if not message:
+        return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
+
+    attempt = db.scalar(
+        select(Attempt).where(Attempt.exam_id == exam_id, Attempt.student_id == student_id)
+    )
+    if attempt is None:
+        return RedirectResponse(
+            f"/{course.slug}/admin/exams/{exam_id}?error=nudge", status_code=303
+        )
+
+    db.add(AdminMessage(attempt_id=attempt.id, message=message))
+    db.commit()
+    logging_service.record(
+        db,
+        "ADMIN_MESSAGE_SENT",
+        message,
+        level="INFO",
+        student_id=student_id,
+        attempt_id=attempt.id,
+        request=request,
+    )
+    live_events.publish(
+        course.slug,
+        exam_id,
+        {"type": "nudge_sent", "attempt_id": attempt.id, "message": message},
+    )
+    return RedirectResponse(f"/{course.slug}/admin/exams/{exam_id}", status_code=303)
 
 
 @router.post("/exams/{exam_id}/regenerate-pdfs")

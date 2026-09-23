@@ -21,6 +21,9 @@
   timezone. Nothing else on this form was saved either; resubmit once it's fixed.</li></ul>{% endif %}
 {% if request.query_params.get('error') == 'access' %}
 <ul class="errors"><li>Could not save exam access settings.</li></ul>{% endif %}
+{% if request.query_params.get('error') == 'nudge' %}
+<ul class="errors"><li>Could not send that message - the student has no attempt in
+  progress on this exam.</li></ul>{% endif %}
 {% if request.query_params.get('imported') %}
 <div class="notice">Imported {{ request.query_params.get('imported') }} question(s).</div>{% endif %}
 {% if request.query_params.get('regenerated') %}
@@ -38,6 +41,33 @@
       or only selected students), and closes any other open exam. Check the questions first.</p>
       <button class="primary" type="submit">Open the exam</button>
     {% endif %}
+  </form>
+</section>
+
+<section class="card">
+  <h2>Live incidents <span id="liveFeedStatus" class="chip">connecting&hellip;</span></h2>
+  <p class="muted">Updates the moment a candidate's browser reports something - nothing to
+  refresh. Only what's happened since you opened this page; check the roster's own incident
+  log for a full history.</p>
+  <div id="liveFeed" class="scroll" style="max-height:280px; border:1px solid var(--line); border-radius:10px; padding:8px">
+    <p class="muted" id="liveFeedEmpty">Nothing yet.</p>
+  </div>
+
+  <h3 style="margin-top:18px">Send a message to a candidate</h3>
+  <p class="muted">Shows as an on-screen note on their exam page - delivered on their next
+  autosave check, usually within a few seconds.</p>
+  <form method="post" action="{{ course_url('/admin/exams/' ~ exam.id ~ '/nudge') }}" id="nudgeForm">
+    <label>Candidate
+      <select name="student_id">
+        {% for attempt, student in attempts_in_progress %}
+        <option value="{{ attempt.student_id }}">{{ student.full_name }} ({{ student.computer_number }})</option>
+        {% else %}
+        <option value="" disabled selected>No one is currently sitting this exam</option>
+        {% endfor %}
+      </select>
+    </label>
+    <label>Message<input name="message" maxlength="300" placeholder="e.g. Please face your camera" required></label>
+    <button class="primary" type="submit"{% if not attempts_in_progress %} disabled{% endif %}>Send</button>
   </form>
 </section>
 
@@ -284,6 +314,52 @@
     const files = e.dataTransfer && e.dataTransfer.files;
     if (files && files.length) { handleFile(files[0]); }
   });
+})();
+</script>
+
+<script>
+(() => {
+  const feed = document.getElementById("liveFeed");
+  const empty = document.getElementById("liveFeedEmpty");
+  const statusChip = document.getElementById("liveFeedStatus");
+  const eventsUrl = "{{ course_url('/admin/exams/' ~ exam.id ~ '/events') }}";
+
+  function escapeHtml(value) {
+    return String(value == null ? "" : value)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  }
+
+  function addEntry(html) {
+    if (empty && empty.isConnected) { empty.remove(); }
+    const row = document.createElement("div");
+    row.className = "live-feed-entry";
+    row.innerHTML = html;
+    feed.prepend(row);
+  }
+
+  function handleEvent(data) {
+    const time = new Date(data.occurred_at || Date.now()).toLocaleTimeString();
+    if (data.type === "incident") {
+      const strike = data.counted
+        ? ` <span class="chip bad">strike ${data.strike_count}</span>` : "";
+      addEntry(
+        `<strong>${escapeHtml(data.student_name)}</strong> ` +
+        `(${escapeHtml(data.computer_number)}) &mdash; ${escapeHtml(data.label)}${strike}` +
+        `<span class="muted"> ${time}</span>`
+      );
+    } else if (data.type === "nudge_sent") {
+      addEntry(`<span class="muted">Message sent: &ldquo;${escapeHtml(data.message)}&rdquo; ${time}</span>`);
+    }
+  }
+
+  // EventSource retries on its own using the stream's "retry:" field - no manual
+  // reconnect loop needed, just reflect connection state in the status chip.
+  const source = new EventSource(eventsUrl);
+  source.onopen = () => { statusChip.textContent = "live"; statusChip.className = "chip ok"; };
+  source.onerror = () => { statusChip.textContent = "reconnecting…"; statusChip.className = "chip"; };
+  source.onmessage = (event) => {
+    try { handleEvent(JSON.parse(event.data)); } catch (err) { /* ignore malformed event */ }
+  };
 })();
 </script>
 {% endblock %}

@@ -11,11 +11,12 @@ from markupsafe import Markup
 from sqlalchemy import select
 from sqlalchemy.orm import Session, joinedload, selectinload
 
-from app import logging_service, pdf, proctor, timezones, vision
+from app import live_events, logging_service, pdf, proctor, timezones, vision
 from app.config import settings
 from app.deps import get_course_db, require_course_ready, require_student, templates
 from app.mailer import Attachment, Message, send
 from app.models_course import (
+    AdminMessage,
     Answer,
     Attempt,
     Exam,
@@ -272,6 +273,24 @@ def save(
     return {"ok": True, **proctor.status_payload(attempt)}
 
 
+def _pending_nudges(db: Session, attempt: Attempt) -> list[str]:
+    """Unseen invigilator messages for this attempt, marking them seen as they're
+    handed back - a message is delivered on the poll that first sees it, never
+    re-sent on a later one. See AdminMessage's docstring for why these are
+    persisted rather than only relayed live."""
+    pending = db.scalars(
+        select(AdminMessage)
+        .where(AdminMessage.attempt_id == attempt.id, AdminMessage.seen_at.is_(None))
+        .order_by(AdminMessage.created_at)
+    ).all()
+    if not pending:
+        return []
+    now = datetime.utcnow()
+    for message in pending:
+        message.seen_at = now
+    return [message.message for message in pending]
+
+
 @router.get("/api/status")
 def status(
     request: Request,
@@ -283,8 +302,11 @@ def status(
     if attempt is None:
         return JSONResponse({"error": "No live attempt."}, status_code=409)
     proctor.touch(attempt)
+    nudges = _pending_nudges(db, attempt)
     db.commit()
-    return proctor.status_payload(attempt)
+    payload = proctor.status_payload(attempt)
+    payload["nudges"] = nudges
+    return payload
 
 
 @router.post("/api/incident")
@@ -304,6 +326,22 @@ def incident(
     category = str(body.get("category") or "UNKNOWN").upper()
     detail = str(body.get("detail") or "")
     entry = proctor.record_incident(db, attempt, category, detail, source="browser")
+
+    live_events.publish(
+        course.slug,
+        attempt.exam_id,
+        {
+            "type": "incident",
+            "attempt_id": attempt.id,
+            "student_name": student.full_name,
+            "computer_number": student.computer_number,
+            "category": category,
+            "label": proctor.label_for(category),
+            "counted": entry.counted,
+            "strike_count": attempt.strike_count or 0,
+            "occurred_at": entry.occurred_at.isoformat() + "Z",
+        },
+    )
 
     snapshot = None
     image_b64 = body.get("snapshot")

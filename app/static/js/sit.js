@@ -412,6 +412,11 @@
       chip.className = "chip " + (status.flagged ? "bad" : status.strike_count ? "" : "ok");
     }
     if (status.locked && !submitted) finishUp(data.coursePrefix + "/submitted");
+    if (Array.isArray(status.nudges)) {
+      status.nudges.forEach((message) => {
+        showAlert("nudge-" + Date.now() + "-" + Math.random(), message, "warn", 20000);
+      });
+    }
   }
 
   async function pollStatus() {

@@ -214,9 +214,37 @@ class Attempt(CourseBase):
     audit_events: Mapped[list["SubmissionAuditEvent"]] = relationship(
         back_populates="attempt", cascade="all, delete-orphan", order_by="SubmissionAuditEvent.at"
     )
+    admin_messages: Mapped[list["AdminMessage"]] = relationship(
+        back_populates="attempt", cascade="all, delete-orphan", order_by="AdminMessage.created_at"
+    )
 
     # One sitting per student per exam. The database, not the client, enforces this.
     __table_args__ = (UniqueConstraint("exam_id", "student_id", name="uq_attempt_exam_student"),)
+
+
+class AdminMessage(CourseBase):
+    """A short "nudge" the invigilator sends to one candidate mid-sitting - shows as
+    an on-screen banner on their exam page (app/static/js/sit.js's status poll picks
+    it up, see app/routers/exam.py's /api/status). Persisted, not just relayed live,
+    so it survives a page reload/reconnect and the admin has a record of what was
+    sent - matching this platform's existing practice of logging every admin action
+    (see app/logging_service.py) rather than trusting an ephemeral channel alone.
+    """
+
+    __tablename__ = "admin_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    attempt_id: Mapped[int] = mapped_column(
+        ForeignKey("attempts.id", ondelete="CASCADE"), index=True
+    )
+    message: Mapped[str] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    # Set the moment it's included in a status poll response - lets the admin panel
+    # show "delivered" rather than just "sent", and stops it being handed back on
+    # every subsequent poll once the candidate has already seen it once.
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    attempt: Mapped[Attempt] = relationship(back_populates="admin_messages")
 
 
 class Answer(CourseBase):
