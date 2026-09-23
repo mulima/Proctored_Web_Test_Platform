@@ -91,10 +91,13 @@ class Exam(CourseBase):
     # "Previous" step is allowed only if the section it would land ON allows it.
     # Defaults reproduce the platform's original, and later platform-wide-flag,
     # behaviour: A was always forward-only, B and C were always free to revisit.
-    # NEW COLUMNS: every already-connected course database needs these added before
-    # this code is deployed - see docs/DATABASE_SCHEMA.sql and the ALTER TABLE
-    # statement recorded for the 2026-09-14 rollout. A database missing them will
-    # fail every query touching `exams` the moment this code runs against it.
+    # Rolled out 2026-09-14 by manually running an ALTER TABLE against every
+    # course database that existed at the time. Any course connected since is
+    # covered automatically instead: app/tenant_db.py's
+    # _ensure_access_control_schema() now also backfills these three on first use,
+    # so a long-dormant legacy course that missed the 09-14 manual pass self-heals
+    # here too rather than hitting "column does not exist" the first time someone
+    # touches it.
     allow_backtrack_section_a: Mapped[bool] = mapped_column(Boolean, default=False)
     allow_backtrack_section_b: Mapped[bool] = mapped_column(Boolean, default=True)
     allow_backtrack_section_c: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -105,10 +108,12 @@ class Exam(CourseBase):
     # here (started_at, deadline_at, ...) - scheduled_start_timezone is kept only so
     # the admin's settings form can redisplay what they originally entered, in the
     # zone they entered it in, rather than a converted UTC time that reads oddly.
-    # NEW COLUMNS: every already-connected course database needs these added before
-    # this code is deployed - see docs/DATABASE_SCHEMA.sql and the ALTER TABLE
-    # statement recorded for the 2026-09-20 rollout, same rollout discipline as the
-    # 2026-09-14 backtrack columns above.
+    # NEW COLUMNS, but no manual per-course rollout needed: app/tenant_db.py's
+    # _ensure_access_control_schema() lazily backfills these (and access_scope
+    # below) onto any already-connected course database on its first request per
+    # process. See that function before adding yet another Exam column - it needs
+    # extending too, or the same "column does not exist" failure this replaced
+    # just recurs for whatever's added next.
     scheduled_start_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     scheduled_start_timezone: Mapped[str] = mapped_column(String(64), default="UTC")
     # 'all' means every eligible student can sit; 'selected' limits sitting to

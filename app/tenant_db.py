@@ -167,33 +167,67 @@ def _sessionmaker_for(lecturer: Lecturer) -> sessionmaker:
 
 
 def _ensure_access_control_schema(session: Session, course: Course) -> None:
-    """Bring pre-existing course databases forward for selected-student exams.
-
-    Course databases are independently provisioned, so a platform deployment
-    cannot run Alembic against every lecturer's connection string up front.
-    The access-control release must therefore add its two backward-compatible
-    objects before this process issues an Exam query that references them.
-    Existing exams safely retain the default ``all`` access scope.
+    """Bring a pre-existing course database forward to whatever Exam columns/tables
+    the current code expects, without needing a central migration runner - course
+    databases are independently provisioned, so a platform deployment cannot run
+    Alembic against every lecturer's connection string up front. Covers every Exam
+    column added since this function was introduced (2026-09-20): the three
+    per-section backtrack flags (rolled out 2026-09-14, before this existed - a
+    course that missed that manual pass self-heals here instead), the scheduled-
+    start columns, and the access-control objects. Existing exams safely retain
+    each new column's default. See models_course.py's Exam class: add a column
+    there, extend this function too, or a legacy course just hits "column does
+    not exist" the first time someone touches it.
     """
     if course.id in _access_control_schema_ready:
         return
 
     bind = session.get_bind()
     dialect = bind.dialect.name
+    # IF NOT EXISTS (Postgres 9.6+) closes the race this Python-level check-then-alter
+    # can't: two requests for the same never-before-upgraded course, landing on this
+    # process before either has cached "ready" (routine right after a deploy restart)
+    # would otherwise both see a column missing and both try to add it - the second
+    # ALTER throwing DuplicateColumn. SQLite has no IF NOT EXISTS form for this, but
+    # it isn't exposed to that concurrent-request race the way a real Postgres
+    # deployment is, so the plain statement (guarded by the same column_names check)
+    # is enough there.
+    add_column_clause = "ADD COLUMN IF NOT EXISTS" if dialect == "postgresql" else "ADD COLUMN"
     column_names = {column["name"] for column in inspect(bind).get_columns("exams")}
+    if "allow_backtrack_section_a" not in column_names:
+        session.execute(
+            text(
+                f"ALTER TABLE exams {add_column_clause} allow_backtrack_section_a "
+                "BOOLEAN NOT NULL DEFAULT false"
+            )
+        )
+    if "allow_backtrack_section_b" not in column_names:
+        session.execute(
+            text(
+                f"ALTER TABLE exams {add_column_clause} allow_backtrack_section_b "
+                "BOOLEAN NOT NULL DEFAULT true"
+            )
+        )
+    if "allow_backtrack_section_c" not in column_names:
+        session.execute(
+            text(
+                f"ALTER TABLE exams {add_column_clause} allow_backtrack_section_c "
+                "BOOLEAN NOT NULL DEFAULT true"
+            )
+        )
     if "scheduled_start_at" not in column_names:
-        session.execute(text("ALTER TABLE exams ADD COLUMN scheduled_start_at TIMESTAMP"))
+        session.execute(text(f"ALTER TABLE exams {add_column_clause} scheduled_start_at TIMESTAMP"))
     if "scheduled_start_timezone" not in column_names:
         session.execute(
             text(
-                "ALTER TABLE exams ADD COLUMN scheduled_start_timezone "
+                f"ALTER TABLE exams {add_column_clause} scheduled_start_timezone "
                 "VARCHAR(64) NOT NULL DEFAULT 'UTC'"
             )
         )
     if "access_scope" not in column_names:
         session.execute(
             text(
-                "ALTER TABLE exams ADD COLUMN access_scope "
+                f"ALTER TABLE exams {add_column_clause} access_scope "
                 "VARCHAR(20) NOT NULL DEFAULT 'all'"
             )
         )
