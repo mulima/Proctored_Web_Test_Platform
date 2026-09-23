@@ -31,7 +31,7 @@ from app.models_course import (
     Student,
     SubmissionAuditEvent,
 )
-from app.models_platform import Lecturer
+from app.models_platform import Course, Lecturer
 from app.security import hash_password, make_session_cookie
 from app.tenant_crypto import encrypt
 
@@ -95,16 +95,27 @@ def _make_course_db(path) -> sessionmaker:
 
 
 def _create_lecturer(platform_session: Session, *, slug: str, course_db_url: str) -> Lecturer:
+    """Creates both platform rows a real signup produces: the Lecturer account
+    (email/password/verification - lives independently of any one course) and the
+    Course it owns (slug, storage connection, readiness - see models_platform.py's
+    lecturer/course split). Returns the Lecturer, since every call site only ever
+    needs its .id (admin session cookies, ownership) or .email (audit assertions)."""
     lecturer = Lecturer(
         email=f"{slug}@example.com",
         password_hash=hash_password("lecturer-password"),
-        slug=slug,
         is_verified=True,
+    )
+    platform_session.add(lecturer)
+    platform_session.flush()
+
+    course = Course(
+        lecturer_id=lecturer.id,
+        slug=slug,
         database_ready=True,
         course_storage_mode="external",
         database_url_encrypted=encrypt(course_db_url),
     )
-    platform_session.add(lecturer)
+    platform_session.add(course)
     platform_session.commit()
     platform_session.refresh(lecturer)
     return lecturer
@@ -181,7 +192,7 @@ def _seed_exam_with_attempts(
                 attempt.submission_mode = "manual"
                 db.refresh(attempt, attribute_names=["student", "exam", "answers", "incidents"])
                 answers_map = {a.question_id: a for a in attempt.answers}
-                attempt.pdf_bytes = pdf.build(attempt, answers_map, lecturer=lecturer_stub(exam.title))
+                attempt.pdf_bytes = pdf.build(attempt, answers_map, course=lecturer_stub(exam.title))
                 attempt.pdf_filename = f"seed_{attempt.id}.pdf"
             db.commit()
 
@@ -354,6 +365,7 @@ def test_student_login_redirects_to_own_dashboard(app_env):
 def test_creating_exam_accepts_scheduled_start_timezone(app_env):
     course_path = app_env["tmp_path"] / "schedule_create.sqlite3"
     course_url = f"sqlite:///{course_path}"
+    _make_course_db(course_path)
     with app_env["PlatformSessionLocal"]() as platform_db:
         lecturer = _create_lecturer(platform_db, slug="schedcreate", course_db_url=course_url)
     app = __import__("app.main", fromlist=["app"]).app
